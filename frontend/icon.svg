@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%"   stop-color="#0f1623"/>
+      <stop offset="100%" stop-color="#1e1040"/>
+    </linearGradient>
+    <linearGradient id="gn" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%"   stop-color="#29cc6a"/>
+      <stop offset="100%" stop-color="#1a9e4e"/>
+    </linearGradient>
+    <linearGradient id="bl" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%"   stop-color="#34bfef"/>
+      <stop offset="100%" stop-color="#1789b0"/>
+    </linearGradient>
+    <linearGradient id="pu" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%"   stop-color="#7c89ff"/>
+      <stop offset="100%" stop-color="#4a55d0"/>
+    </linearGradient>
+    <linearGradient id="rd" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%"   stop-color="#ff6a5e"/>
+      <stop offset="100%" stop-color="#d93025"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Outer rounded background -->
+  <rect width="128" height="128" rx="26" ry="26" fill="url(#bg)"/>
+
+  <!-- Subtle border shine -->
+  <rect x="1" y="1" width="126" height="126" rx="25" ry="25"
+        fill="none" stroke="rgba(255,255,255,0.07)" stroke-width="1.5"/>
+
+  <!-- === 4 app tiles, 2×2 grid === -->
+  <!-- Tile positions: TL(14,14) TR(70,14) BL(14,70) BR(70,70), size 44×44 -->
+
+  <!-- WhatsApp — top-left (green) -->
+  <rect x="14" y="14" width="44" height="44" rx="12" fill="url(#gn)"/>
+  <!-- speech bubble: rounded rect + triangle tail -->
+  <rect x="24" y="24" width="24" height="17" rx="5" fill="white" opacity="0.93"/>
+  <path d="M24 38 l4 6 l0 -6 Z" fill="white" opacity="0.93"/>
+  <!-- dots in bubble -->
+  <circle cx="30" cy="33" r="2.2" fill="#1a9e4e"/>
+  <circle cx="36" cy="33" r="2.2" fill="#1a9e4e"/>
+  <circle cx="42" cy="33" r="2.2" fill="#1a9e4e"/>
+
+  <!-- Telegram — top-right (blue) -->
+  <rect x="70" y="14" width="44" height="44" rx="12" fill="url(#bl)"/>
+  <!-- paper plane (simplified) -->
+  <polygon points="79,36 110,22 96,50" fill="white" opacity="0.93"/>
+  <polygon points="96,50 92,41 102,37" fill="#1789b0" opacity="0.85"/>
+
+  <!-- Discord — bottom-left (purple) -->
+  <rect x="14" y="70" width="44" height="44" rx="12" fill="url(#pu)"/>
+  <!-- headset / controller outline (simplified) -->
+  <path d="M22 95 a14,13 0 0,1 28,0" fill="none" stroke="white" stroke-width="4" stroke-linecap="round" opacity="0.93"/>
+  <rect x="20" y="95" width="6" height="9" rx="3" fill="white" opacity="0.93"/>
+  <rect x="32" y="95" width="6" height="9" rx="3" fill="white" opacity="0.93"/>
+
+  <!-- Gmail/Email — bottom-right (red) -->
+  <rect x="70" y="70" width="44" height="44" rx="12" fill="url(#rd)"/>
+  <!-- envelope -->
+  <rect x="79" y="82" width="26" height="18" rx="3" fill="white" opacity="0.93"/>
+  <path d="M79 82 l13 11 l13 -11" fill="none" stroke="#d93025" stroke-width="2.5"/>
+
+  <!-- Center connector dot -->
+  <circle cx="64" cy="64" r="5" fill="rgba(255,255,255,0.18)"/>
+  <circle cx="64" cy="64" r="2.5" fill="rgba(255,255,255,0.55)"/>
+</svg>

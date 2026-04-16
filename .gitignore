@@ -1,0 +1,36 @@
+# Build artifacts
+src-tauri/target/
+node_modules/
+
+# Session data (contains user login/cookies — NEVER commit)
+sessions/
+*.localstorage
+*.localstorage-shm
+*.localstorage-wal
+cookies
+
+# OS files
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# IDE / editor
+.vscode/
+.idea/
+.qwen/
+
+# Dev context / scratch
+context/
+contexto/
+
+# Screenshots (large binaries)
+*.png
+
+# Package output
+*.deb
+*.AppImage
+*.msi
+*.exe
+*.dmg
+*.rpm

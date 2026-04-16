@@ -1,0 +1,98 @@
+[
+  {
+    "id": "whatsapp",
+    "name": "WhatsApp",
+    "url": "https://web.whatsapp.com",
+    "icon": null,
+    "color": "#25D366",
+    "user_agent_override": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+  },
+  {
+    "id": "telegram",
+    "name": "Telegram",
+    "url": "https://web.telegram.org/k/",
+    "icon": null,
+    "color": "#2CA5E0",
+    "user_agent_override": null
+  },
+  {
+    "id": "gmail",
+    "name": "Gmail",
+    "url": "https://mail.google.com",
+    "icon": null,
+    "color": "#EA4335",
+    "user_agent_override": null
+  },
+  {
+    "id": "google_calendar",
+    "name": "Google Calendar",
+    "url": "https://calendar.google.com",
+    "icon": null,
+    "color": "#4285F4",
+    "user_agent_override": null
+  },
+  {
+    "id": "google_drive",
+    "name": "Google Drive",
+    "url": "https://drive.google.com",
+    "icon": null,
+    "color": "#0F9D58",
+    "user_agent_override": null
+  },
+  {
+    "id": "slack",
+    "name": "Slack",
+    "url": "https://app.slack.com",
+    "icon": null,
+    "color": "#4A154B",
+    "user_agent_override": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+  },
+  {
+    "id": "discord",
+    "name": "Discord",
+    "url": "https://discord.com/app",
+    "icon": null,
+    "color": "#5865F2",
+    "user_agent_override": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+  },
+  {
+    "id": "notion",
+    "name": "Notion",
+    "url": "https://www.notion.so",
+    "icon": null,
+    "color": "#000000",
+    "user_agent_override": null
+  },
+  {
+    "id": "github",
+    "name": "GitHub",
+    "url": "https://github.com",
+    "icon": null,
+    "color": "#24292F",
+    "user_agent_override": null
+  },
+  {
+    "id": "youtube",
+    "name": "YouTube",
+    "url": "https://www.youtube.com",
+    "icon": null,
+    "color": "#FF0000",
+    "user_agent_override": null
+  },
+  {
+    "id": "spotify",
+    "name": "Spotify",
+    "url": "https://open.spotify.com",
+    "icon": null,
+    "color": "#1DB954",
+    "user_agent_override": null
+  },
+  {
+    "id": "trello",
+    "name": "Trello",
+    "url": "https://trello.com",
+    "icon": null,
+    "color": "#0052CC",
+    "user_agent_override": null
+  }
+]

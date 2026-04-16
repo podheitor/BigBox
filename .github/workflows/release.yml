@@ -1,0 +1,91 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2"
+
+      - name: Build .deb
+        run: cargo tauri build --bundles deb
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bigbox-linux-deb
+          path: src-tauri/target/release/bundle/deb/*.deb
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2"
+
+      - name: Build MSI & NSIS
+        run: cargo tauri build --bundles msi,nsis
+
+      - name: Upload MSI
+        uses: actions/upload-artifact@v4
+        with:
+          name: bigbox-windows-msi
+          path: src-tauri/target/release/bundle/msi/*.msi
+
+      - name: Upload NSIS
+        uses: actions/upload-artifact@v4
+        with:
+          name: bigbox-windows-nsis
+          path: src-tauri/target/release/bundle/nsis/*.exe
+
+  release:
+    needs: [build-linux, build-windows]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/bigbox-linux-deb/*.deb
+            artifacts/bigbox-windows-msi/*.msi
+            artifacts/bigbox-windows-nsis/*.exe
+          generate_release_notes: true
