@@ -25,7 +25,10 @@ context/
 contexto/
 
 # Screenshots (large binaries)
-*.png
+# Keep icons, ignore screenshots
+screenshots/
+*.screenshot.png
+Screenshot_*.png
 
 # Package output
 *.deb

@@ -68,6 +68,7 @@ pub fn run() {
             setup_gtk_layout(app)?;
 
             // Reposition all service WebViews when window is resized
+            #[cfg(target_os = "linux")]
             {
                 let window = app.get_window("main").ok_or("main window missing")?;
                 let app_h = app.handle().clone();
