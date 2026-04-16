@@ -70,7 +70,7 @@ BigBox uses your system's native WebView engine instead of bundling an entire Ch
 
 ### Linux (Ubuntu/Debian)
 
-Download the `.deb` package from [Releases](https://github.com/podheitor/BigBox-Tauri/releases):
+Download the `.deb` package from [Releases](https://github.com/podheitor/BigBox/releases):
 
 ```bash
 sudo dpkg -i bigbox_0.1.0_amd64.deb
@@ -91,7 +91,7 @@ cargo tauri build
 
 ### Arch Linux / BigLinux / Manjaro
 
-Download the `.pkg.tar.zst` package from [Releases](https://github.com/podheitor/BigBox-Tauri/releases):
+Download the `.pkg.tar.zst` package from [Releases](https://github.com/podheitor/BigBox/releases):
 
 ```bash
 sudo pacman -U bigbox-0.1.0-1-x86_64.pkg.tar.zst
@@ -101,20 +101,20 @@ sudo pacman -U bigbox-0.1.0-1-x86_64.pkg.tar.zst
 
 ```bash
 # Clone and build using the included PKGBUILD
-git clone https://github.com/podheitor/BigBox-Tauri.git
-cd BigBox-Tauri
+git clone https://github.com/podheitor/BigBox.git
+cd BigBox
 makepkg -si
 ```
 
 ### Windows
 
-Download the `.msi` installer from [Releases](https://github.com/podheitor/BigBox-Tauri/releases) and run it.
+Download the `.msi` installer from [Releases](https://github.com/podheitor/BigBox/releases) and run it.
 
 ### Build from source (any platform)
 
 ```bash
-git clone https://github.com/podheitor/BigBox-Tauri.git
-cd BigBox-Tauri
+git clone https://github.com/podheitor/BigBox.git
+cd BigBox
 cargo install tauri-cli --version "^2"
 cargo tauri build
 ```
@@ -124,7 +124,7 @@ cargo tauri build
 ## Architecture
 
 ```
-BigBox-Tauri/
+BigBox/
 ├── src-tauri/           # Rust backend (Tauri v2)
 │   ├── src/
 │   │   ├── lib.rs       # App setup, GTK layout, window events
