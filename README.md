@@ -89,6 +89,23 @@ cargo install tauri-cli --version "^2"
 cargo tauri build
 ```
 
+### Arch Linux / BigLinux / Manjaro
+
+Download the `.pkg.tar.zst` package from [Releases](https://github.com/podheitor/BigBox-Tauri/releases):
+
+```bash
+sudo pacman -U bigbox-0.1.0-1-x86_64.pkg.tar.zst
+```
+
+**Build from source (AUR-style):**
+
+```bash
+# Clone and build using the included PKGBUILD
+git clone https://github.com/podheitor/BigBox-Tauri.git
+cd BigBox-Tauri
+makepkg -si
+```
+
 ### Windows
 
 Download the `.msi` installer from [Releases](https://github.com/podheitor/BigBox-Tauri/releases) and run it.
