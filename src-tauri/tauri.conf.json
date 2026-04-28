@@ -20,7 +20,7 @@
         "decorations": false,
         "center": true,
         "url": "index.html",
-        "transparent": true
+        "transparent": false
       }
     ],
     "security": {
