@@ -6,7 +6,8 @@ pkgdesc="All your messaging apps in one blazing-fast window. Lightweight Rambox 
 arch=('x86_64')
 url="https://github.com/podheitor/BigBox"
 license=('GPL-3.0-or-later')
-depends=('webkit2gtk-4.1' 'gtk3' 'libayatana-appindicator')
+depends=('webkit2gtk-4.1' 'gtk3' 'libayatana-appindicator'
+         'gst-plugins-base' 'gst-plugins-good' 'gst-plugins-bad' 'gst-libav' 'xdg-utils')
 makedepends=('rust' 'cargo')
 provides=('bigbox')
 conflicts=('bigbox')

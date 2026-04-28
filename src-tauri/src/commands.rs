@@ -251,16 +251,82 @@ pub fn preload_service(
 }
 
 
-/// Auto-grant notification/media permissions for service WebViews.
-/// Desktop messaging aggregator = user explicitly added the service.
+/// Auto-grant notification/media permissions for service WebViews,
+/// enable clipboard + HTML5 media settings, and route external links
+/// (target="_blank" / window.open) to the system browser via xdg-open.
 #[cfg(target_os = "linux")]
 fn setup_webview_permissions(wv: &tauri::Webview) {
     let _ = wv.with_webview(|platform_wv| {
-        use webkit2gtk::{PermissionRequestExt, WebViewExt, PermissionRequest};
+        use webkit2gtk::{
+            NavigationPolicyDecision, NavigationPolicyDecisionExt, PermissionRequest,
+            PermissionRequestExt, PolicyDecisionExt, PolicyDecisionType, SettingsExt,
+            URIRequestExt, WebViewExt,
+        };
         let inner = platform_wv.inner();
+
+        // 1. Auto-grant all permission prompts (notifications, mic, camera, clipboard…)
         inner.connect_permission_request(|_wv, request: &PermissionRequest| {
             request.allow();
             true
+        });
+
+        // 2. Tune WebKit settings so WhatsApp/Telegram behave like a desktop browser:
+        //    - JS clipboard access  → image paste in chat
+        //    - HTML5 media + MediaSource + hardware accel → video playback
+        if let Some(settings) = inner.settings() {
+            settings.set_javascript_can_access_clipboard(true);
+            settings.set_javascript_can_open_windows_automatically(true);
+            settings.set_enable_media(true);
+            settings.set_enable_mediasource(true);
+            settings.set_enable_media_capabilities(true);
+            settings.set_enable_media_stream(true);
+            settings.set_enable_encrypted_media(true);
+            settings.set_enable_webaudio(true);
+            settings.set_enable_webgl(true);
+            settings.set_enable_html5_database(true);
+            settings.set_enable_html5_local_storage(true);
+            settings.set_enable_smooth_scrolling(true);
+            // NOTE: do not change hardware_acceleration_policy here — main.rs
+            // disables DMABUF/compositing to avoid WebKitGTK rendering bugs;
+            // forcing Always would re-trigger them.
+        }
+
+        // 3. target="_blank" / window.open → ignore inside the embedded view
+        //    and hand the URL to the system browser.
+        inner.connect_decide_policy(|_wv, decision, dtype| {
+            use webkit2gtk::glib::Cast;
+            if dtype != PolicyDecisionType::NewWindowAction {
+                return false;
+            }
+            let Some(nav) = decision.dynamic_cast_ref::<NavigationPolicyDecision>() else {
+                return false;
+            };
+            let Some(action) = nav.navigation_action() else {
+                return false;
+            };
+            let url = action
+                .request()
+                .and_then(|r| r.uri())
+                .map(|s| s.to_string())
+                .unwrap_or_default();
+            if url.starts_with("http://") || url.starts_with("https://") {
+                let _ = std::process::Command::new("xdg-open").arg(&url).spawn();
+            }
+            decision.ignore();
+            true
+        });
+
+        // 4. window.open() that bypasses decide-policy (rare) → also xdg-open.
+        inner.connect_create(|_wv, action| {
+            let url = action
+                .request()
+                .and_then(|r| r.uri())
+                .map(|s| s.to_string())
+                .unwrap_or_default();
+            if url.starts_with("http://") || url.starts_with("https://") {
+                let _ = std::process::Command::new("xdg-open").arg(&url).spawn();
+            }
+            None
         });
     });
 }

@@ -79,8 +79,10 @@ sudo dpkg -i bigbox_0.1.0_amd64.deb
 **Build from source:**
 
 ```bash
-# Install dependencies
-sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev
+# Install dependencies (build + GStreamer codecs for in-chat video playback)
+sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
+    gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+    gstreamer1.0-plugins-bad gstreamer1.0-libav xdg-utils
 
 # Install Tauri CLI
 cargo install tauri-cli --version "^2"
