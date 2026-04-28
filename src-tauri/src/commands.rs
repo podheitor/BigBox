@@ -150,6 +150,57 @@ const NOTIFICATION_GRANT_SCRIPT: &str = r#"
 })();
 "#;
 
+// WebKitGTK doesn't synthesize image File entries on the DOM `paste` event
+// from GTK clipboard image targets — WhatsApp/Telegram see e.clipboardData
+// with no items and silently drop the paste. We listen for paste events;
+// when no image is present, we read the async Clipboard API (enabled via
+// javascript_can_access_clipboard), wrap any image blob as a File, and
+// re-dispatch a synthetic paste with a populated DataTransfer.
+const CLIPBOARD_IMAGE_SHIM: &str = r#"
+(function(){
+  var REENTRY = '__bigbox_paste_reentry__';
+  document.addEventListener('paste', function(ev){
+    if(ev[REENTRY]) return;
+    var cd = ev.clipboardData;
+    if(cd){
+      if(cd.files && cd.files.length) return;
+      if(cd.items){
+        for(var i=0;i<cd.items.length;i++){
+          if(cd.items[i].type && cd.items[i].type.indexOf('image/') === 0) return;
+        }
+      }
+    }
+    if(!navigator.clipboard || !navigator.clipboard.read) return;
+    var target = ev.target;
+    navigator.clipboard.read().then(function(items){
+      var jobs = [];
+      items.forEach(function(item){
+        item.types.forEach(function(t){
+          if(t.indexOf('image/') === 0){
+            jobs.push(item.getType(t).then(function(blob){
+              return new File([blob], 'pasted-image.' + (t.split('/')[1]||'png'), {type: t});
+            }));
+          }
+        });
+      });
+      if(!jobs.length) return;
+      Promise.all(jobs).then(function(files){
+        if(!files.length) return;
+        var dt = new DataTransfer();
+        files.forEach(function(f){ dt.items.add(f); });
+        var synth = new ClipboardEvent('paste', {
+          bubbles: true,
+          cancelable: true,
+          clipboardData: dt
+        });
+        synth[REENTRY] = true;
+        (target || document.activeElement || document.body).dispatchEvent(synth);
+      });
+    }).catch(function(){});
+  }, true);
+})();
+"#;
+
 
 // ── WebView commands ─────────────────────────────────────────────
 
@@ -360,7 +411,8 @@ fn ensure_service_webview_created(
     let mut builder = WebviewBuilder::new(label, WebviewUrl::External(parsed_url))
         .data_directory(session_dir)
         .initialization_script(&badge_script)
-        .initialization_script(NOTIFICATION_GRANT_SCRIPT);
+        .initialization_script(NOTIFICATION_GRANT_SCRIPT)
+        .initialization_script(CLIPBOARD_IMAGE_SHIM);
 
     if let Some(ua) = user_agent {
         builder = builder.user_agent(ua);
