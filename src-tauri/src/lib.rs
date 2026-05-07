@@ -30,6 +30,7 @@ pub fn run() {
             commands::hide_service,
             commands::reload_service,
             commands::set_muted,
+            commands::zoom_service,
             commands::expand_shell,
             commands::collapse_shell,
             commands::open_url,

@@ -23,6 +23,8 @@ pub struct AppState {
     pub active_view:   Mutex<Option<String>>,
     /// Unread badge counts keyed by WebView label (e.g. "svc-discord")
     pub badges:        Mutex<HashMap<String, u32>>,
+    /// Per-service zoom level (1.0 = 100%). Persists for the session.
+    pub zoom_levels:   Mutex<HashMap<String, f64>>,
 }
 
 // ── Config commands ──────────────────────────────────────────────
@@ -201,6 +203,42 @@ const CLIPBOARD_IMAGE_SHIM: &str = r#"
 })();
 "#;
 
+
+// Captures Ctrl++ / Ctrl+- / Ctrl+0 keyboard shortcuts and Ctrl+wheel
+// in the service WebView and forwards them to the `zoom_service` Tauri
+// command. The native side mutates WebKit's zoom_level and remembers the
+// value per-service. We intercept early (capture phase) so the page
+// itself can't swallow the events, and call preventDefault so the
+// browser's own zoom-on-wheel doesn't double-apply.
+const ZOOM_SHORTCUT_SCRIPT: &str = r#"
+(function(){
+  function invoke(delta){
+    try{
+      window.__TAURI__.core.invoke('zoom_service', {delta: delta});
+    }catch(_){
+      try{
+        window.__TAURI_INTERNALS__.invoke('zoom_service', {delta: delta});
+      }catch(__){ }
+    }
+  }
+  document.addEventListener('keydown', function(ev){
+    if(!(ev.ctrlKey || ev.metaKey)) return;
+    var k = ev.key;
+    if(k === '+' || k === '=' || k === 'Add'){
+      ev.preventDefault(); ev.stopPropagation(); invoke(0.1);
+    } else if(k === '-' || k === '_' || k === 'Subtract'){
+      ev.preventDefault(); ev.stopPropagation(); invoke(-0.1);
+    } else if(k === '0'){
+      ev.preventDefault(); ev.stopPropagation(); invoke(0.0);
+    }
+  }, true);
+  document.addEventListener('wheel', function(ev){
+    if(!(ev.ctrlKey || ev.metaKey)) return;
+    ev.preventDefault(); ev.stopPropagation();
+    invoke(ev.deltaY < 0 ? 0.1 : -0.1);
+  }, {capture: true, passive: false});
+})();
+"#;
 
 // ── WebView commands ─────────────────────────────────────────────
 
@@ -412,7 +450,8 @@ fn ensure_service_webview_created(
         .data_directory(session_dir)
         .initialization_script(&badge_script)
         .initialization_script(NOTIFICATION_GRANT_SCRIPT)
-        .initialization_script(CLIPBOARD_IMAGE_SHIM);
+        .initialization_script(CLIPBOARD_IMAGE_SHIM)
+        .initialization_script(ZOOM_SHORTCUT_SCRIPT);
 
     if let Some(ua) = user_agent {
         builder = builder.user_agent(ua);
@@ -539,6 +578,44 @@ pub fn set_muted(
     cfg.muted = muted;
     config::save(&cfg);
     Ok(())
+}
+
+/// Adjust zoom for the active service WebView.
+/// `delta` semantics: > 0 zoom-in, < 0 zoom-out, 0.0 reset to 100%.
+/// Returns the new zoom level as a percentage (e.g. 110 for 110%).
+#[tauri::command]
+#[allow(unused_variables)]
+pub fn zoom_service(
+    app:   AppHandle,
+    state: State<'_, AppState>,
+    delta: f64,
+) -> Result<u32, String> {
+    let label = state
+        .active_view
+        .lock()
+        .unwrap()
+        .clone()
+        .ok_or_else(|| "no active service".to_string())?;
+
+    let mut levels = state.zoom_levels.lock().unwrap();
+    let current = *levels.get(&label).unwrap_or(&1.0);
+    let next = if delta == 0.0 {
+        1.0
+    } else {
+        (current + delta).clamp(0.5, 3.0)
+    };
+    levels.insert(label.clone(), next);
+    drop(levels);
+
+    #[cfg(target_os = "linux")]
+    if let Some(wv) = app.get_webview(&label) {
+        let _ = wv.with_webview(move |platform_wv| {
+            use webkit2gtk::WebViewExt;
+            platform_wv.inner().set_zoom_level(next);
+        });
+    }
+
+    Ok((next * 100.0).round() as u32)
 }
 
 /// Expand shell to full width (for welcome screen / dialogs).
