@@ -417,6 +417,45 @@ fn setup_webview_permissions(wv: &tauri::Webview) {
             }
             None
         });
+
+        // 5. Downloads. Telegram/WhatsApp deliver attachments via blob: URLs
+        //    triggered by <a download> or window.open(blob:). decide_policy
+        //    only handles http(s); blob: navigations fall through to
+        //    WebContext::download-started, where we must pick a destination
+        //    (default destination is empty → download fails silently).
+        if let Some(ctx) = inner.context() {
+            use webkit2gtk::{DownloadExt, WebContextExt};
+            ctx.connect_download_started(|_ctx, download| {
+                download.connect_decide_destination(|dl, suggested| {
+                    let dir = dirs::download_dir()
+                        .or_else(dirs::home_dir)
+                        .unwrap_or_else(|| std::path::PathBuf::from("."));
+                    let _ = std::fs::create_dir_all(&dir);
+
+                    let safe = suggested.rsplit('/').next().unwrap_or("download");
+                    let safe = if safe.is_empty() { "download" } else { safe };
+
+                    let mut target = dir.join(safe);
+                    if target.exists() {
+                        let stem = target.file_stem()
+                            .map(|s| s.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| "download".into());
+                        let ext = target.extension()
+                            .map(|s| format!(".{}", s.to_string_lossy()))
+                            .unwrap_or_default();
+                        for n in 1..10_000 {
+                            let candidate = dir.join(format!("{stem} ({n}){ext}"));
+                            if !candidate.exists() { target = candidate; break; }
+                        }
+                    }
+
+                    let uri = format!("file://{}", target.to_string_lossy());
+                    dl.set_allow_overwrite(false);
+                    dl.set_destination(&uri);
+                    true
+                });
+            });
+        }
     });
 }
 
