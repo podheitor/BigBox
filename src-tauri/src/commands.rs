@@ -204,6 +204,339 @@ const CLIPBOARD_IMAGE_SHIM: &str = r#"
 "#;
 
 
+// WhatsApp Web detects MSE codec support via MediaSource.isTypeSupported and,
+// when the engine reports HE-AAC capability, ships videos as HE-AAC v2 + PS
+// inside fragmented MP4. WebKitGTK 4.1's GStreamer pipeline (avdec_aac /
+// fdkaacdec / faad) all mishandle that codec_data and either silence audio
+// or abort the whole video pipeline. By rejecting the HE-AAC family in
+// isTypeSupported we force WhatsApp to fall back to plain AAC-LC
+// (mp4a.40.2), which the default decoder handles correctly.
+const CODEC_FILTER_SCRIPT: &str = r#"
+(function(){
+  if(typeof MediaSource === 'undefined') return;
+  var BLOCKED = /mp4a\.40\.(5|29|39)/i;
+  function patch(obj){
+    if(!obj || !obj.isTypeSupported) return;
+    var orig = obj.isTypeSupported.bind(obj);
+    obj.isTypeSupported = function(type){
+      if(typeof type === 'string' && BLOCKED.test(type)) return false;
+      return orig(type);
+    };
+  }
+  patch(window.MediaSource);
+  if(typeof window.ManagedMediaSource !== 'undefined'){
+    patch(window.ManagedMediaSource);
+  }
+})();
+"#;
+
+// WebKitGTK 4.1 has a bug in the `<video src=blob:...>` (non-MSE) path: the
+// video stream decodes but audio is silently dropped — confirmed against an
+// AAC-LC fmp4 sample where both http:// and MSE+SourceBuffer routes work
+// fine. WhatsApp Web sometimes serves clips that way (service worker hands
+// the page a Blob, the page does `video.src = URL.createObjectURL(blob)`),
+// which is why audio drops there even after the HE-AAC filter.
+//
+// Workaround: when a same-origin blob: URL is assigned to a <video>, swap
+// it for a synthetic MediaSource fed with the blob's bytes. That routes
+// playback through `WebKitMediaSourceGStreamer` which handles audio
+// correctly. We track blobs created via URL.createObjectURL so we can map
+// the blob: URL back to its underlying Blob.
+const BLOB_VIDEO_PATCH: &str = r#"
+(function(){
+  if(typeof MediaSource === 'undefined') return;
+
+  function log(line){
+    if(!window.__BB_DEBUG_CODEC) return;
+    try {
+      if(window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke){
+        window.__TAURI__.core.invoke('bb_log', { line: '[' + new Date().toISOString() + '] ' + line });
+      }
+    } catch(_){}
+  }
+
+  // Probe the actual avc1 profile/level/compat from the avcC box so we can
+  // hand addSourceBuffer the matching codec string. WebKit MSE rejects
+  // mismatched profile claims even when the family is supported.
+  function probeAvc(buf){
+    var v = new Uint8Array(buf);
+    var limit = Math.min(v.length - 8, 65536);
+    for(var i = 0; i < limit; i++){
+      if(v[i] === 0x61 && v[i+1] === 0x76 && v[i+2] === 0x63 && v[i+3] === 0x43){
+        var profile = v[i+5];
+        var profileCompat = v[i+6];
+        var level = v[i+7];
+        function hex(n){ return (n < 16 ? '0' : '') + n.toString(16); }
+        return 'avc1.' + hex(profile) + hex(profileCompat) + hex(level);
+      }
+    }
+    return null;
+  }
+
+  // Track which video elements we've already redirected so re-assignments
+  // of the same blob don't loop. WeakMap key=video, value=string of last
+  // redirected blob URL.
+  var redirected = new WeakMap();
+  // URLs that came from URL.createObjectURL(MediaSource) — never redirect those,
+  // they're already MSE-backed and trying to fetch them fails ("Load failed").
+  var skipUrls = new Set();
+  var origCreate = URL.createObjectURL.bind(URL);
+  URL.createObjectURL = function(obj){
+    var url = origCreate(obj);
+    if(obj instanceof MediaSource || (typeof ManagedMediaSource !== 'undefined' && obj instanceof ManagedMediaSource)){
+      skipUrls.add(url);
+    }
+    return url;
+  };
+  var origRevoke = URL.revokeObjectURL.bind(URL);
+  URL.revokeObjectURL = function(url){ skipUrls.delete(url); return origRevoke(url); };
+
+  // URLs we've tried to fetch and failed — don't retry, prevents log spam
+  // and CPU thrash from the polling loop hitting MSE-internal currentSrc
+  // URLs that aren't fetchable.
+  var failedUrls = new Set();
+
+  function feedFromUrl(video, blobUrl){
+    if(redirected.get(video) === blobUrl) return;
+    if(failedUrls.has(blobUrl)) return;
+    redirected.set(video, blobUrl);
+    log('blob-patch: feedFromUrl ' + blobUrl);
+
+    fetch(blobUrl).then(function(r){ return r.arrayBuffer(); }).then(function(buf){
+      var avc = probeAvc(buf) || 'avc1.42E01E';
+      var codec = 'video/mp4; codecs="' + avc + ',mp4a.40.2"';
+      log('blob-patch: fetched bytes=' + buf.byteLength + ' avc=' + avc);
+
+      // Stash the largest blob seen so devtools can extract it via
+      // `await window.bbLastVideoB64()` for offline ffprobe inspection.
+      if(buf.byteLength > 1000000){
+        window.bbLastVideo = buf;
+        window.bbLastVideoB64 = function(){
+          var u8 = new Uint8Array(buf);
+          var s = '';
+          for(var i = 0; i < u8.length; i++) s += String.fromCharCode(u8[i]);
+          return btoa(s);
+        };
+      }
+
+      var ms = new MediaSource();
+      var msUrl = origCreate(ms);
+      // Mark our synthetic MediaSource URL so the poll/setter intercepts
+      // ignore it — origCreate bypasses the URL.createObjectURL wrapper
+      // that would normally add it to skipUrls.
+      skipUrls.add(msUrl);
+      // Use the underlying setter to skip our own intercept loop.
+      origSetSrc.call(video, msUrl);
+
+      var tag = 'sz=' + buf.byteLength;
+      ms.addEventListener('sourceended', function(){ log('blob-patch: sourceended ' + tag); });
+      ms.addEventListener('sourceclose', function(){ log('blob-patch: sourceclose ' + tag); });
+      video.addEventListener('error', function(){
+        var err = video.error;
+        log('blob-patch: video error code=' + (err ? err.code : '?') + ' msg=' + (err ? err.message : '') + ' ' + tag);
+      });
+      video.addEventListener('stalled', function(){ log('blob-patch: video stalled ' + tag); });
+      video.addEventListener('canplay', function(){ log('blob-patch: video canplay ' + tag); });
+      video.addEventListener('playing', function(){ log('blob-patch: video PLAYING ' + tag); });
+
+      ms.addEventListener('sourceopen', function once(){
+        ms.removeEventListener('sourceopen', once);
+        log('blob-patch: sourceopen ' + tag);
+        var sb;
+        try { sb = ms.addSourceBuffer(codec); }
+        catch(e){
+          log('blob-patch: addSourceBuffer FAIL codec=' + codec + ' err=' + e.message);
+          try { sb = ms.addSourceBuffer('video/mp4; codecs="avc1.42E01E,mp4a.40.2"'); }
+          catch(e2){ log('blob-patch: fallback addSourceBuffer FAIL ' + e2.message); return; }
+        }
+        sb.addEventListener('error', function(){ log('blob-patch: sb error ' + tag); });
+        sb.addEventListener('abort', function(){ log('blob-patch: sb abort ' + tag); });
+
+        // Chunked appendBuffer: WebKit MSE rejects/aborts a single huge
+        // append (~11 MB observed). 1 MB chunks process reliably and let
+        // the demuxer emit progress events between calls.
+        var CHUNK = 1024 * 1024;
+        var off = 0;
+        var total = buf.byteLength;
+        function appendNext(){
+          if(off >= total){
+            var br = (sb.buffered && sb.buffered.length)
+              ? sb.buffered.start(0) + '-' + sb.buffered.end(0) : 'empty';
+            log('blob-patch: append complete buffered=' + br + ' ' + tag);
+            try { ms.endOfStream(); log('blob-patch: endOfStream OK ' + tag); }
+            catch(e){ log('blob-patch: endOfStream FAIL ' + e.message + ' ' + tag); }
+            return;
+          }
+          var end = Math.min(off + CHUNK, total);
+          var slice = buf.slice(off, end);
+          off = end;
+          try { sb.appendBuffer(slice); }
+          catch(e){ log('blob-patch: appendBuffer FAIL off=' + off + ' ' + e.message + ' ' + tag); }
+        }
+        sb.addEventListener('updateend', appendNext);
+        appendNext();
+      });
+    }).catch(function(e){
+      log('blob-patch: fetch FAIL ' + blobUrl + ' err=' + e.message);
+      failedUrls.add(blobUrl);
+      redirected.delete(video);
+    });
+  }
+
+  // Capture the native <video>.src setter before anyone else can.
+  var proto = HTMLMediaElement.prototype;
+  var desc = Object.getOwnPropertyDescriptor(proto, 'src');
+  if(!desc || !desc.set){ log('blob-patch: cannot capture src setter'); return; }
+  var origSetSrc = desc.set;
+  var origGetSrc = desc.get;
+
+  function shouldIntercept(value){
+    if(typeof value !== 'string' || !value.startsWith('blob:')) return false;
+    // Skip MediaSource-backed blob URLs — already on the working pipeline.
+    if(skipUrls.has(value)) return false;
+    // Same-origin only — cross-origin blobs can't be fetched.
+    return value.indexOf(location.origin) >= 0 || value.startsWith('blob:null/');
+  }
+
+  Object.defineProperty(proto, 'src', {
+    configurable: true,
+    enumerable: desc.enumerable,
+    get: origGetSrc ? function(){ return origGetSrc.call(this); } : undefined,
+    set: function(v){
+      if(shouldIntercept(v) && (this.tagName === 'VIDEO')){
+        feedFromUrl(this, v);
+        return;
+      }
+      origSetSrc.call(this, v);
+    }
+  });
+
+  // setAttribute('src', ...) bypasses the prototype setter — patch too.
+  var origSetAttr = Element.prototype.setAttribute;
+  Element.prototype.setAttribute = function(name, value){
+    if(this.tagName === 'VIDEO' && typeof name === 'string' && name.toLowerCase() === 'src'
+       && shouldIntercept(value)){
+      feedFromUrl(this, value);
+      return;
+    }
+    return origSetAttr.call(this, name, value);
+  };
+
+  // Service-worker-served blob: URLs (e.g. WhatsApp) never pass through the
+  // page's URL.createObjectURL nor through the property setters above —
+  // the URL arrives already attached to a <video> via React's reconciler.
+  // To catch those: poll every <video> in the DOM and, whenever a blob:
+  // URL is on currentSrc/src that we haven't redirected yet, take over.
+  function scanVideos(){
+    var vids = document.querySelectorAll('video');
+    for(var i = 0; i < vids.length; i++){
+      var v = vids[i];
+      // Use .src (the explicitly-set value), not .currentSrc — currentSrc
+      // can reflect a MSE-internal URL that we can't fetch and don't need
+      // to redirect.
+      var s = v.src || '';
+      if(shouldIntercept(s) && redirected.get(v) !== s && !failedUrls.has(s)){
+        log('blob-patch: poll detected ' + s);
+        feedFromUrl(v, s);
+      }
+    }
+  }
+  setInterval(scanVideos, 250);
+  // Also rescan on any DOM mutation so we catch newly-added videos quickly.
+  if(document.body){
+    new MutationObserver(scanVideos).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['src'] });
+  } else {
+    document.addEventListener('DOMContentLoaded', function(){
+      new MutationObserver(scanVideos).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['src'] });
+    });
+  }
+})();
+"#;
+
+
+// Diagnostic-only: dumps every codec capability query, every MSE source-buffer
+// addition/error, and every <video> error to /tmp/bigbox-codec-probe.log via
+// the bb_log Tauri command. Used to chase down WhatsApp regressions when no
+// DevTools is available. Safe to leave installed but produces a lot of log
+// output for media-heavy sites.
+const CODEC_PROBE_SCRIPT: &str = r#"
+(function(){
+  function log(line){
+    if(!window.__BB_DEBUG_CODEC) return;
+    try {
+      if(window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke){
+        window.__TAURI__.core.invoke('bb_log', { line: '[' + new Date().toISOString() + '] ' + line });
+      }
+    } catch(_){}
+  }
+  log('probe-init url=' + location.href);
+
+  // Capture every URL.createObjectURL(blob) so we can see what mime type
+  // WhatsApp/etc tag video blobs with — needed to decide BLOB_VIDEO_PATCH filter.
+  if(typeof URL !== 'undefined' && URL.createObjectURL){
+    var origCreate = URL.createObjectURL.bind(URL);
+    URL.createObjectURL = function(obj){
+      var url = origCreate(obj);
+      try {
+        if(obj instanceof Blob){
+          log('createObjectURL blob type="' + (obj.type || '') + '" size=' + obj.size + ' url=' + url);
+        } else if(obj && obj.constructor){
+          log('createObjectURL object kind=' + obj.constructor.name + ' url=' + url);
+        }
+      } catch(_){}
+      return url;
+    };
+  }
+
+  if(typeof MediaSource !== 'undefined'){
+    var origIs = MediaSource.isTypeSupported.bind(MediaSource);
+    MediaSource.isTypeSupported = function(t){
+      var r = origIs(t);
+      log('isTypeSupported(' + t + ')=' + r);
+      return r;
+    };
+    var origAdd = MediaSource.prototype.addSourceBuffer;
+    MediaSource.prototype.addSourceBuffer = function(t){
+      log('addSourceBuffer(' + t + ')');
+      try { var sb = origAdd.call(this, t); log('addSourceBuffer OK ' + t); return sb; }
+      catch(e){ log('addSourceBuffer FAIL ' + t + ' :: ' + e.message); throw e; }
+    };
+  }
+
+  function watchVideo(v){
+    if(v.__bbWatched) return;
+    v.__bbWatched = true;
+    v.addEventListener('error', function(){
+      var e = v.error || {};
+      log('video error code=' + e.code + ' msg=' + e.message + ' src=' + (v.currentSrc || v.src));
+    });
+    v.addEventListener('loadedmetadata', function(){
+      log('video loadedmetadata duration=' + v.duration + ' src=' + (v.currentSrc || v.src));
+    });
+    v.addEventListener('stalled', function(){
+      log('video stalled src=' + (v.currentSrc || v.src));
+    });
+    v.addEventListener('canplay', function(){ log('video canplay'); });
+    v.addEventListener('playing', function(){ log('video playing'); });
+  }
+  // Watch all existing + future videos
+  document.querySelectorAll('video').forEach(watchVideo);
+  var mo = new MutationObserver(function(muts){
+    muts.forEach(function(m){
+      m.addedNodes && m.addedNodes.forEach(function(n){
+        if(n.nodeType === 1){
+          if(n.tagName === 'VIDEO') watchVideo(n);
+          n.querySelectorAll && n.querySelectorAll('video').forEach(watchVideo);
+        }
+      });
+    });
+  });
+  if(document.body){ mo.observe(document.body, { childList: true, subtree: true }); }
+  else { document.addEventListener('DOMContentLoaded', function(){ mo.observe(document.body, { childList: true, subtree: true }); }); }
+})();
+"#;
+
+
 // Captures Ctrl++ / Ctrl+- / Ctrl+0 keyboard shortcuts and Ctrl+wheel
 // in the service WebView and forwards them to the `zoom_service` Tauri
 // command. The native side mutates WebKit's zoom_level and remembers the
@@ -490,7 +823,20 @@ fn ensure_service_webview_created(
         .initialization_script(&badge_script)
         .initialization_script(NOTIFICATION_GRANT_SCRIPT)
         .initialization_script(CLIPBOARD_IMAGE_SHIM)
+        .initialization_script(CODEC_FILTER_SCRIPT)
+        .initialization_script(BLOB_VIDEO_PATCH)
         .initialization_script(ZOOM_SHORTCUT_SCRIPT);
+
+    // Diagnostic probe — opt-in via BB_DEBUG_CODEC=1. The log() helpers
+    // inside BLOB_VIDEO_PATCH and CODEC_PROBE_SCRIPT no-op unless
+    // window.__BB_DEBUG_CODEC is truthy, so we set it here only when the
+    // env var is present. Keeps the IPC chatter and unbounded
+    // /tmp/bigbox-codec-probe.log file out of normal runs.
+    if std::env::var("BB_DEBUG_CODEC").is_ok() {
+        builder = builder
+            .initialization_script("window.__BB_DEBUG_CODEC = true;")
+            .initialization_script(CODEC_PROBE_SCRIPT);
+    }
 
     if let Some(ua) = user_agent {
         builder = builder.user_agent(ua);
@@ -746,6 +1092,17 @@ pub fn open_url(url: String) -> Result<(), String> {
         .spawn()
         .map_err(|e| format!("Failed to open URL: {e}"))?;
     Ok(())
+}
+
+/// Diagnostic-only sink: lets injected JS append a line to a fixed log file
+/// when the page can't expose console output. Used to capture the codec
+/// detection sequence on services where DevTools isn't available.
+#[tauri::command]
+pub fn bb_log(line: String) {
+    use std::io::Write;
+    let path = "/tmp/bigbox-codec-probe.log";
+    let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) else { return };
+    let _ = writeln!(f, "{line}");
 }
 
 // ── Helpers ──────────────────────────────────────────────────────

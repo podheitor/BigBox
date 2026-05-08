@@ -38,6 +38,7 @@ pub fn run() {
             commands::update_badge,
             commands::clear_badge,
             commands::show_service_menu,
+            commands::bb_log,
         ])
         .setup(|app| {
             // Handle context-menu click events emitted by show_service_menu
