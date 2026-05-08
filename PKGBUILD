@@ -1,6 +1,6 @@
 # Maintainer: Heitor Faria <heitorfaria@gmail.com>
 pkgname=bigbox
-pkgver=0.1.0
+pkgver=0.1.1
 pkgrel=1
 pkgdesc="All your messaging apps in one blazing-fast window. Lightweight Rambox alternative built with Tauri v2 + Rust."
 arch=('x86_64')
