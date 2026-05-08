@@ -83,6 +83,11 @@
   </screenshots>
 
   <releases>
+    <release version="0.1.2" date="2026-05-08">
+      <description>
+        <p>Flathub-ready release: ships desktop entry and AppStream metadata in the source tag.</p>
+      </description>
+    </release>
     <release version="0.1.1" date="2026-05-08">
       <description>
         <p>WhatsApp and Telegram videos now play with audio on WebKitGTK.</p>
