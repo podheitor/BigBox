@@ -29,6 +29,8 @@ contexto/
 screenshots/
 *.screenshot.png
 Screenshot_*.png
+# Exception: Flathub-required screenshots referenced from metainfo.xml
+!flatpak/screenshots/
 
 # Package output
 *.deb

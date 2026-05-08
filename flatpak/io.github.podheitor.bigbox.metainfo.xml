@@ -65,19 +65,19 @@
 
   <screenshots>
     <screenshot type="default">
-      <image>https://raw.githubusercontent.com/podheitor/BigBox/main/Screenshot_20260415_163227.png</image>
+      <image>https://raw.githubusercontent.com/podheitor/BigBox/main/flatpak/screenshots/01-overview.png</image>
       <caption>BigBox showing multiple messaging services side-by-side</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/podheitor/BigBox/main/Screenshot_20260415_163258.png</image>
+      <image>https://raw.githubusercontent.com/podheitor/BigBox/main/flatpak/screenshots/02-whatsapp.png</image>
       <caption>WhatsApp Web with native unread badge</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/podheitor/BigBox/main/Screenshot_20260415_163323.png</image>
+      <image>https://raw.githubusercontent.com/podheitor/BigBox/main/flatpak/screenshots/03-sidebar.png</image>
       <caption>Multi-service sidebar with drag-and-drop reordering</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/podheitor/BigBox/main/Screenshot_20260415_163403.png</image>
+      <image>https://raw.githubusercontent.com/podheitor/BigBox/main/flatpak/screenshots/04-zoom.png</image>
       <caption>Per-service zoom and isolated session storage</caption>
     </screenshot>
   </screenshots>
