@@ -1,0 +1,90 @@
+name: Flathub manifest update
+
+# Bumps the manifest in flathub/io.github.podheitor.bigbox whenever a new
+# vX.Y.Z tag is published here. Opens a PR against the `master` branch of
+# the Flathub repo with the new tag + commit SHA.
+#
+# Prerequisites (one-time):
+#   1. The Flathub repo flathub/io.github.podheitor.bigbox must exist
+#      (created after Flathub reviewers approve the initial submission PR).
+#   2. A repo secret FLATHUB_DEPLOY_TOKEN must be set: a fine-grained PAT
+#      with content + pull-request write access to flathub/io.github.podheitor.bigbox.
+#   3. Optional: register the project at release-monitoring.org and update
+#      x-checker-data.project-id in flatpak/*.yaml — once registered, the
+#      Flathub bot opens these PRs on its own and this workflow becomes
+#      redundant. Until then, this workflow is the bridge.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to publish (e.g. v0.1.1)'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  update-flathub:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Determine target tag
+        id: tag
+        run: |
+          if [[ -n "${{ inputs.tag }}" ]]; then
+            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${{ github.event.release.tag_name }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Resolve commit SHA for the tag
+        id: sha
+        run: |
+          sha=$(git ls-remote https://github.com/${{ github.repository }} \
+                refs/tags/${{ steps.tag.outputs.tag }} | awk '{print $1}')
+          if [[ -z "$sha" ]]; then
+            echo "::error::Could not resolve SHA for tag ${{ steps.tag.outputs.tag }}"
+            exit 1
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout Flathub repo
+        uses: actions/checkout@v4
+        with:
+          repository: flathub/io.github.podheitor.bigbox
+          ref: master
+          token: ${{ secrets.FLATHUB_DEPLOY_TOKEN }}
+          path: flathub
+
+      - name: Bump tag + commit in manifest
+        working-directory: flathub
+        run: |
+          tag="${{ steps.tag.outputs.tag }}"
+          sha="${{ steps.sha.outputs.sha }}"
+          manifest=io.github.podheitor.bigbox.yaml
+
+          # Replace the `tag:` and `commit:` lines under the upstream source.
+          # Using sed because the structure is stable and yq isn't preinstalled.
+          sed -i "s|^\(\s*tag:\s*\).*|\1${tag}|" "$manifest"
+          sed -i "s|^\(\s*commit:\s*\).*|\1${sha}|" "$manifest"
+
+          echo "=== diff ==="
+          git --no-pager diff "$manifest"
+
+      - name: Create pull request
+        uses: peter-evans/create-pull-request@v6
+        with:
+          path: flathub
+          token: ${{ secrets.FLATHUB_DEPLOY_TOKEN }}
+          branch: bump-${{ steps.tag.outputs.tag }}
+          title: 'Update to ${{ steps.tag.outputs.tag }}'
+          commit-message: 'Update to ${{ steps.tag.outputs.tag }}'
+          body: |
+            Automated bump triggered by a new BigBox release.
+
+            - Upstream tag: ${{ steps.tag.outputs.tag }}
+            - Commit SHA: ${{ steps.sha.outputs.sha }}
+            - Source: https://github.com/${{ github.repository }}/releases/tag/${{ steps.tag.outputs.tag }}
+          delete-branch: true
