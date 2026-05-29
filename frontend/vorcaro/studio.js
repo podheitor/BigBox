@@ -42,14 +42,17 @@ window.addEventListener('DOMContentLoaded', async () => {
       workspaces: workspaces || [],
     });
   } catch (e) {
-    toast('Erro carregando estado: ' + e, 'error');
+    toast(t('toast.stateLoadError', { err: e }), 'error');
     console.error(e);
   }
+
+  applyStaticI18n();
 
   bindTabs();
   bindContactsTab();
   bindListsTab();
   bindSettingsTab();
+  bindLanguage();
   bindScrape();
   bindCampaign();
   bindLogs();
@@ -65,6 +68,30 @@ window.addEventListener('DOMContentLoaded', async () => {
   renderCampaignRecent();
   renderLogsCampaignSelect();
 });
+
+// Re-render every JS-generated piece of UI. Called after a language switch
+// so dynamic strings (table rows, dropdowns, summaries) pick up the new locale.
+function reRenderDynamic() {
+  renderContacts();
+  renderListsSide();
+  if (state.selectedListId) renderListDetail();
+  fillWorkspaceSelectors();
+  renderCampaignForm();
+  renderCampaignRecent();
+  renderLogsCampaignSelect();
+  renderLogsForActive();
+  renderAttachmentList();
+  updateBulkBar();
+  updateStartButtonLabel();
+}
+
+// Language selector (Settings tab).
+function bindLanguage() {
+  const sel = document.getElementById('set-language');
+  if (!sel) return;
+  sel.value = currentLang();
+  sel.addEventListener('change', () => setLang(sel.value, reRenderDynamic));
+}
 
 const PLATFORM_SHORT = {
   whatsapp_web: 'WA',
@@ -82,7 +109,7 @@ function fillWorkspaceSelectors() {
   const scrapeSel = document.getElementById('scrape-workspace');
   if (scrapeSel) {
     if (state.workspaces.length === 0) {
-      scrapeSel.innerHTML = '<option value="">— nenhum WhatsApp/Telegram adicionado —</option>';
+      scrapeSel.innerHTML = `<option value="">${esc(t('scrape.workspace.none'))}</option>`;
       document.getElementById('btn-scrape').disabled = true;
     } else {
       scrapeSel.innerHTML = state.workspaces.map(w =>
@@ -123,7 +150,7 @@ function refreshCampaignWorkspaces() {
   }
 
   if (matching.length === 0) {
-    sel.innerHTML = `<option value="">— nenhum ${PLATFORM_SHORT[platform] || platform} adicionado em BigBox —</option>`;
+    sel.innerHTML = `<option value="">${esc(t('campaign.workspace.none', { platform: PLATFORM_SHORT[platform] || platform }))}</option>`;
   } else {
     sel.innerHTML = matching.map(w =>
       `<option value="${esc(w.id)}">${esc(w.display_name)}</option>`
@@ -133,13 +160,13 @@ function refreshCampaignWorkspaces() {
 
 // ── Tab navigation ───────────────────────────────────────────────
 function bindTabs() {
-  document.querySelectorAll('.tab').forEach(t => {
-    t.addEventListener('click', () => {
-      if (t.classList.contains('disabled')) return;
+  document.querySelectorAll('.tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      if (tab.classList.contains('disabled')) return;
       document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
       document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
-      t.classList.add('active');
-      document.querySelector(`.panel[data-panel="${t.dataset.tab}"]`).classList.add('active');
+      tab.classList.add('active');
+      document.querySelector(`.panel[data-panel="${tab.dataset.tab}"]`).classList.add('active');
     });
   });
 }
@@ -205,7 +232,7 @@ function filteredContacts() {
 
 function allTags() {
   const set = new Set();
-  state.contacts.forEach(c => (c.tags || []).forEach(t => set.add(t)));
+  state.contacts.forEach(c => (c.tags || []).forEach(tg => set.add(tg)));
   return [...set].sort();
 }
 
@@ -214,8 +241,8 @@ function renderContacts() {
   const tagSel = document.getElementById('contact-tag-filter');
   const tags = allTags();
   const current = tagSel.value;
-  tagSel.innerHTML = '<option value="">Todas as tags</option>' +
-    tags.map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join('');
+  tagSel.innerHTML = `<option value="">${esc(t('contacts.tagFilter.all'))}</option>` +
+    tags.map(tg => `<option value="${esc(tg)}">${esc(tg)}</option>`).join('');
   tagSel.value = tags.includes(current) ? current : '';
 
   // Body
@@ -223,7 +250,7 @@ function renderContacts() {
   const rows = filteredContacts();
   tbody.innerHTML = rows.map(c => {
     const checked = state.selectedIds.has(c.id) ? 'checked' : '';
-    const chips = (c.tags || []).map(t => `<span class="chip">${esc(t)}</span>`).join('');
+    const chips = (c.tags || []).map(tg => `<span class="chip">${esc(tg)}</span>`).join('');
     return `
       <tr data-id="${c.id}">
         <td class="col-check"><input type="checkbox" class="row-check" ${checked}></td>
@@ -234,8 +261,8 @@ function renderContacts() {
         <td>${chips}</td>
         <td class="col-actions">
           <div class="row-actions">
-            <button class="btn btn-small btn-edit">Editar</button>
-            <button class="btn btn-small btn-danger btn-del">Apagar</button>
+            <button class="btn btn-small btn-edit">${esc(t('btn.edit'))}</button>
+            <button class="btn btn-small btn-danger btn-del">${esc(t('btn.delete'))}</button>
           </div>
         </td>
       </tr>`;
@@ -262,8 +289,7 @@ function updateBulkBar() {
   const n = state.selectedIds.size;
   const bar = document.getElementById('bulk-bar');
   bar.hidden = n === 0;
-  document.getElementById('bulk-count').textContent =
-    `${n} selecionado${n === 1 ? '' : 's'}`;
+  document.getElementById('bulk-count').textContent = t('bulk.count', { n });
   // Campaign tab's ad-hoc count mirrors this set.
   const adhocCount = document.getElementById('camp-adhoc-count');
   if (adhocCount) adhocCount.textContent = n;
@@ -276,7 +302,7 @@ function openContactDialog(id) {
   form.reset();
   const editing = id ? state.contacts.find(c => c.id === id) : null;
   document.getElementById('dlg-contact-title').textContent =
-    editing ? 'Editar contato' : 'Novo contato';
+    editing ? t('dlg.contact.edit') : t('dlg.contact.new');
   form.dataset.id = editing ? editing.id : '';
   if (editing) {
     form.display_name.value = editing.display_name || '';
@@ -298,7 +324,7 @@ async function onContactFormSubmit(e) {
     whatsapp: f.whatsapp.value.trim() || null,
     whatsapp_business: f.whatsapp_business.value.trim() || null,
     telegram: f.telegram.value.trim() || null,
-    tags: f.tags.value.split(',').map(t => t.trim()).filter(Boolean),
+    tags: f.tags.value.split(',').map(s => s.trim()).filter(Boolean),
     source: f.dataset.id ? undefined : 'manual',
     notes: f.notes.value.trim() || null,
   };
@@ -312,14 +338,14 @@ async function onContactFormSubmit(e) {
     else state.contacts.push(saved);
     renderContacts();
     document.getElementById('dlg-contact').close();
-    toast('Contato salvo', 'ok');
+    toast(t('toast.contactSaved'), 'ok');
   } catch (err) {
-    toast('Erro: ' + err, 'error');
+    toast(t('toast.error', { err }), 'error');
   }
 }
 
 async function deleteContact(id) {
-  if (!confirm('Apagar este contato?')) return;
+  if (!confirm(t('confirm.deleteContact'))) return;
   try {
     await invoke('vorcaro_delete_contact', { id });
     state.contacts = state.contacts.filter(c => c.id !== id);
@@ -328,9 +354,9 @@ async function deleteContact(id) {
     state.lists.forEach(l => { l.contact_ids = (l.contact_ids || []).filter(x => x !== id); });
     renderContacts();
     if (state.selectedListId) renderListDetail();
-    toast('Contato apagado', 'ok');
+    toast(t('toast.contactDeleted'), 'ok');
   } catch (err) {
-    toast('Erro: ' + err, 'error');
+    toast(t('toast.error', { err }), 'error');
   }
 }
 
@@ -346,9 +372,9 @@ async function onCsvFile(e) {
     const snap = await invoke('vorcaro_get_state');
     state.contacts = snap.contacts || [];
     renderContacts();
-    toast(`CSV: ${report.added} novos · ${report.merged} mesclados · ${report.skipped} ignorados`, 'ok');
+    toast(t('toast.csvResult', { added: report.added, merged: report.merged, skipped: report.skipped }), 'ok');
   } catch (err) {
-    toast('Erro no CSV: ' + err, 'error');
+    toast(t('toast.csvError', { err }), 'error');
   }
 }
 
@@ -356,20 +382,20 @@ async function onCsvFile(e) {
 async function onBulkDelete() {
   const ids = [...state.selectedIds];
   if (ids.length === 0) return;
-  if (!confirm(`Apagar ${ids.length} contato(s)?`)) return;
+  if (!confirm(t('confirm.bulkDelete', { n: ids.length }))) return;
   for (const id of ids) {
     try { await invoke('vorcaro_delete_contact', { id }); } catch (_) {}
   }
   state.contacts = state.contacts.filter(c => !state.selectedIds.has(c.id));
   state.selectedIds.clear();
   renderContacts();
-  toast(`${ids.length} apagado(s)`, 'ok');
+  toast(t('toast.bulkDeleted', { n: ids.length }), 'ok');
 }
 
 async function onBulkTag() {
   const ids = [...state.selectedIds];
   if (ids.length === 0) return;
-  const tag = await prompt('Aplicar tag a ' + ids.length + ' contato(s):', '');
+  const tag = await prompt(t('prompt.bulkTag', { n: ids.length }), '');
   if (!tag) return;
   try {
     await invoke('vorcaro_apply_tag', { contactIds: ids, tag });
@@ -379,32 +405,32 @@ async function onBulkTag() {
       }
     });
     renderContacts();
-    toast('Tag aplicada', 'ok');
-  } catch (err) { toast('Erro: ' + err, 'error'); }
+    toast(t('toast.tagApplied'), 'ok');
+  } catch (err) { toast(t('toast.error', { err }), 'error'); }
 }
 
 async function onBulkUntag() {
   const ids = [...state.selectedIds];
   if (ids.length === 0) return;
-  const tag = await prompt('Remover tag de ' + ids.length + ' contato(s):', '');
+  const tag = await prompt(t('prompt.bulkUntag', { n: ids.length }), '');
   if (!tag) return;
   try {
     await invoke('vorcaro_remove_tag', { contactIds: ids, tag });
     state.contacts.forEach(c => {
       if (state.selectedIds.has(c.id)) {
-        c.tags = (c.tags || []).filter(t => t !== tag);
+        c.tags = (c.tags || []).filter(tg => tg !== tag);
       }
     });
     renderContacts();
-    toast('Tag removida', 'ok');
-  } catch (err) { toast('Erro: ' + err, 'error'); }
+    toast(t('toast.tagRemoved'), 'ok');
+  } catch (err) { toast(t('toast.error', { err }), 'error'); }
 }
 
 async function onBulkAddToList() {
   const ids = [...state.selectedIds];
   if (ids.length === 0) return;
   if (state.lists.length === 0) {
-    toast('Crie uma lista primeiro na aba Listas', 'error');
+    toast(t('toast.createListFirst'), 'error');
     return;
   }
   const sel = document.getElementById('pick-list-select');
@@ -432,14 +458,14 @@ async function onBulkAddToList() {
       });
     }
     if (state.selectedListId === listId) renderListDetail();
-    toast(`${ok} adicionado(s) à lista`, 'ok');
+    toast(t('toast.addedToList', { n: ok }), 'ok');
   }, { once: true });
 }
 
 // ── LISTS TAB ────────────────────────────────────────────────────
 function bindListsTab() {
   document.getElementById('btn-new-list').addEventListener('click', async () => {
-    const name = await prompt('Nome da nova lista:', '');
+    const name = await prompt(t('prompt.newList'), '');
     if (!name) return;
     try {
       const saved = await invoke('vorcaro_save_list', {
@@ -449,7 +475,7 @@ function bindListsTab() {
       state.selectedListId = saved.id;
       renderListsSide();
       renderListDetail();
-    } catch (err) { toast('Erro: ' + err, 'error'); }
+    } catch (err) { toast(t('toast.error', { err }), 'error'); }
   });
 
   document.getElementById('btn-rename-list').addEventListener('click', async () => {
@@ -464,22 +490,22 @@ function bindListsTab() {
       const idx = state.lists.findIndex(l => l.id === saved.id);
       if (idx >= 0) state.lists[idx] = saved;
       renderListsSide();
-      toast('Lista renomeada', 'ok');
-    } catch (err) { toast('Erro: ' + err, 'error'); }
+      toast(t('toast.listRenamed'), 'ok');
+    } catch (err) { toast(t('toast.error', { err }), 'error'); }
   });
 
   document.getElementById('btn-delete-list').addEventListener('click', async () => {
     const list = currentList();
     if (!list) return;
-    if (!confirm(`Apagar lista "${list.name}"? (Os contatos permanecem.)`)) return;
+    if (!confirm(t('confirm.deleteList', { name: list.name }))) return;
     try {
       await invoke('vorcaro_delete_list', { id: list.id });
       state.lists = state.lists.filter(l => l.id !== list.id);
       state.selectedListId = null;
       renderListsSide();
       document.getElementById('list-detail').hidden = true;
-      toast('Lista apagada', 'ok');
-    } catch (err) { toast('Erro: ' + err, 'error'); }
+      toast(t('toast.listDeleted'), 'ok');
+    } catch (err) { toast(t('toast.error', { err }), 'error'); }
   });
 
   document.getElementById('list-add-search').addEventListener('input', renderListAddCandidates);
@@ -494,7 +520,7 @@ function renderListsSide() {
   ul.innerHTML = state.lists.map(l => `
     <li data-id="${l.id}" class="${l.id === state.selectedListId ? 'active' : ''}">
       ${esc(l.name)}
-      <span class="meta">${(l.contact_ids || []).length} contato(s)</span>
+      <span class="meta">${esc(t('list.meta.count', { n: (l.contact_ids || []).length }))}</span>
     </li>`).join('');
   ul.querySelectorAll('li').forEach(li => {
     li.addEventListener('click', () => {
@@ -525,9 +551,9 @@ function renderListDetail() {
     ? memberContacts.map(c => `
         <li data-id="${c.id}">
           <span>${esc(c.display_name)} <small style="color:var(--fg-dim)">${esc(handles(c))}</small></span>
-          <button data-id="${c.id}">Remover</button>
+          <button data-id="${c.id}">${esc(t('list.member.remove'))}</button>
         </li>`).join('')
-    : '<li style="justify-content:center;color:var(--fg-dim)">Lista vazia</li>';
+    : `<li style="justify-content:center;color:var(--fg-dim)">${esc(t('list.empty.members'))}</li>`;
   membersUl.querySelectorAll('button').forEach(btn => {
     btn.addEventListener('click', async () => {
       const cid = btn.dataset.id;
@@ -536,7 +562,7 @@ function renderListDetail() {
         list.contact_ids = list.contact_ids.filter(x => x !== cid);
         renderListsSide();
         renderListDetail();
-      } catch (err) { toast('Erro: ' + err, 'error'); }
+      } catch (err) { toast(t('toast.error', { err }), 'error'); }
     });
   });
 
@@ -560,9 +586,9 @@ function renderListAddCandidates() {
     ? candidates.map(c => `
         <li>
           <span>${esc(c.display_name)} <small style="color:var(--fg-dim)">${esc(handles(c))}</small></span>
-          <button data-id="${c.id}">Adicionar</button>
+          <button data-id="${c.id}">${esc(t('list.add.add'))}</button>
         </li>`).join('')
-    : '<li style="justify-content:center;color:var(--fg-dim)">Sem candidatos</li>';
+    : `<li style="justify-content:center;color:var(--fg-dim)">${esc(t('list.add.noCandidates'))}</li>`;
   ul.querySelectorAll('button').forEach(btn => {
     btn.addEventListener('click', async () => {
       const cid = btn.dataset.id;
@@ -571,7 +597,7 @@ function renderListAddCandidates() {
         list.contact_ids.push(cid);
         renderListsSide();
         renderListDetail();
-      } catch (err) { toast('Erro: ' + err, 'error'); }
+      } catch (err) { toast(t('toast.error', { err }), 'error'); }
     });
   });
 }
@@ -594,7 +620,7 @@ function bindSettingsTab() {
         parseInt(document.getElementById('set-retries').value, 10) || 0,
     };
     if (settings.max_delay_secs < settings.min_delay_secs) {
-      toast('Atraso máximo deve ser ≥ mínimo', 'error');
+      toast(t('toast.maxDelayError'), 'error');
       return;
     }
     try {
@@ -603,7 +629,7 @@ function bindSettingsTab() {
       const flag = document.getElementById('settings-saved-flag');
       flag.hidden = false;
       setTimeout(() => { flag.hidden = true; }, 1800);
-    } catch (err) { toast('Erro: ' + err, 'error'); }
+    } catch (err) { toast(t('toast.error', { err }), 'error'); }
   });
 }
 
@@ -674,9 +700,9 @@ async function onSaveCloud() {
     // Reload to get the redacted token back so we don't accidentally
     // overwrite it with the redacted form on next save.
     await fillCloudApiForm();
-    toast('Credenciais Cloud API salvas', 'ok');
+    toast(t('toast.cloudSaved'), 'ok');
   } catch (err) {
-    toast('Erro: ' + err, 'error');
+    toast(t('toast.error', { err }), 'error');
   }
 }
 
@@ -684,11 +710,11 @@ async function onTestCloud() {
   const status = document.getElementById('cloud-status');
   status.hidden = false;
   status.className = '';
-  status.textContent = 'testando…';
+  status.textContent = t('cloud.testing');
   try {
     const info = await invoke('vorcaro_verify_cloud_connection');
     status.className = 'ok';
-    status.textContent = 'OK — ' + info.slice(0, 120);
+    status.textContent = t('cloud.testOk', { info: info.slice(0, 120) });
   } catch (err) {
     status.className = '';
     status.style.color = 'var(--danger)';
@@ -707,12 +733,12 @@ async function bindScrape() {
     const ta = document.getElementById('debug-dump-text');
     ta.select();
     document.execCommand('copy');
-    toast('Copiado', 'ok');
+    toast(t('toast.copied'), 'ok');
   });
   document.getElementById('scrape-workspace').addEventListener('change', () => {
     // Reset label dropdown so stale labels from another account don't leak.
     const sel = document.getElementById('scrape-label');
-    sel.innerHTML = '<option value="">— sem filtro de etiqueta —</option>';
+    sel.innerHTML = `<option value="">${esc(t('scrape.label.none'))}</option>`;
     refreshWaLabels().catch(() => {});
   });
 
@@ -739,12 +765,12 @@ async function bindScrape() {
   });
   // Progress for the slow click-extract phase.
   await listen('vorcaro://scrape-progress', ({ payload }) => {
-    toast(`Extraindo telefones… ${payload.current}/${payload.total}`, 'ok');
+    toast(t('scrape.progress', { current: payload.current, total: payload.total }), 'ok');
   });
   // Debug dump from WA driver — opened by 🐞 button OR auto-triggered on listLabels failure.
   await listen('vorcaro://debug-dom-result', ({ payload }) => {
     const dlg = document.getElementById('dlg-debug');
-    document.getElementById('debug-dump-text').value = payload.dump || '(vazio)';
+    document.getElementById('debug-dump-text').value = payload.dump || t('debug.empty');
     if (!dlg.open) dlg.showModal();
   });
 
@@ -753,16 +779,16 @@ async function bindScrape() {
     const sel = document.getElementById('scrape-label');
     const prev = sel.value;
     const labels = payload.labels || [];
-    let html = '<option value="">— sem filtro de etiqueta —</option>';
+    let html = `<option value="">${esc(t('scrape.label.none'))}</option>`;
     labels.forEach(lbl => { html += `<option value="${esc(lbl)}">${esc(lbl)}</option>`; });
     sel.innerHTML = html;
     if (prev && labels.includes(prev)) sel.value = prev;
     if (payload.error) {
-      toast('Etiquetas: ' + payload.error, 'error');
+      toast(t('labels.error', { err: payload.error }), 'error');
     } else if (labels.length === 0) {
-      toast('Nenhuma etiqueta encontrada', 'error');
+      toast(t('labels.none'), 'error');
     } else {
-      toast(`${labels.length} etiqueta(s) carregada(s)`, 'ok');
+      toast(t('labels.loaded', { n: labels.length }), 'ok');
     }
   });
 }
@@ -773,37 +799,37 @@ async function refreshWaLabels() {
   try {
     await invoke('vorcaro_list_wa_labels', { workspaceId });
   } catch (err) {
-    toast('Etiquetas: ' + err, 'error');
+    toast(t('labels.error', { err }), 'error');
   }
 }
 
 async function runDomDebug() {
   const workspaceId = document.getElementById('scrape-workspace').value;
   if (!workspaceId) {
-    toast('Selecione uma conta primeiro', 'error');
+    toast(t('toast.selectAccountFirst'), 'error');
     return;
   }
   try {
     await invoke('vorcaro_debug_chat_pane', { workspaceId });
   } catch (err) {
-    toast('Diag: ' + err, 'error');
+    toast(t('diag.error', { err }), 'error');
   }
 }
 
 async function startScrape() {
   const workspaceId = document.getElementById('scrape-workspace').value;
   if (!workspaceId) {
-    toast('Adicione um WhatsApp ou Telegram em BigBox primeiro.', 'error');
+    toast(t('toast.addAccountFirst'), 'error');
     return;
   }
   const ws = state.workspaces.find(w => w.id === workspaceId);
   const labelFilter = (document.getElementById('scrape-label').value || '').trim() || null;
   try {
     await invoke('vorcaro_scrape_workspace', { workspaceId, labelFilter });
-    const label = labelFilter ? ` (etiqueta: ${labelFilter})` : '';
-    toast(`Raspando ${ws?.display_name || workspaceId}${label}…`, 'ok');
+    const label = labelFilter ? t('scrape.labelPart', { label: labelFilter }) : '';
+    toast(t('scrape.scraping', { name: ws?.display_name || workspaceId, label }), 'ok');
   } catch (err) {
-    toast('Não foi possível raspar: ' + err, 'error');
+    toast(t('scrape.cantScrape', { err }), 'error');
   }
 }
 
@@ -830,13 +856,13 @@ function openScrapeDialog(platform, rows, error) {
   document.getElementById('scrape-check-all').checked = true;
 
   document.getElementById('dlg-scrape-title').textContent =
-    `Raspagem: ${PLATFORM_LABEL[platform] || platform}`;
+    t('scrape.dialog.title', { platform: PLATFORM_LABEL[platform] || platform });
   const statusEl = document.getElementById('dlg-scrape-status');
   if (error) {
-    statusEl.textContent = `Erro: ${error}`;
+    statusEl.textContent = t('toast.error', { err: error });
     statusEl.style.color = 'var(--danger)';
   } else {
-    statusEl.textContent = `${rows.length} conversa(s) encontrada(s). Selecione quais importar.`;
+    statusEl.textContent = t('scrape.dialog.found', { n: rows.length });
     statusEl.style.color = 'var(--fg-dim)';
   }
   renderScrapeBody();
@@ -856,7 +882,7 @@ function renderScrapeBody() {
         <td>${esc(r.name)}</td>
         <td>${esc(handle)}</td>
       </tr>`;
-  }).join('') || '<tr><td colspan="3" class="empty">Sem resultados</td></tr>';
+  }).join('') || `<tr><td colspan="3" class="empty">${esc(t('scrape.noResults'))}</td></tr>`;
 
   tbody.querySelectorAll('tr[data-key]').forEach(tr => {
     const key = tr.dataset.key;
@@ -871,7 +897,7 @@ async function importScrapedSelection() {
   const selected = state.scrapeRows.filter((r, idx) =>
     state.scrapeSelected.has(rowKey(r, idx)));
   if (selected.length === 0) {
-    toast('Nada selecionado', 'error');
+    toast(t('scrape.nothingSelected'), 'error');
     return;
   }
   try {
@@ -884,9 +910,9 @@ async function importScrapedSelection() {
     state.contacts = snap.contacts || [];
     renderContacts();
     document.getElementById('dlg-scrape').close();
-    toast(`Raspagem: ${report.added} novos · ${report.merged} mesclados · ${report.skipped} ignorados`, 'ok');
+    toast(t('scrape.importResult', { added: report.added, merged: report.merged, skipped: report.skipped }), 'ok');
   } catch (err) {
-    toast('Erro: ' + err, 'error');
+    toast(t('toast.error', { err }), 'error');
   }
 }
 
@@ -980,15 +1006,15 @@ async function refreshTemplates() {
   try {
     cloudTemplates = await invoke('vorcaro_list_cloud_templates');
     const sel = document.getElementById('camp-template-name');
-    const approved = cloudTemplates.filter(t => t.status === 'APPROVED');
+    const approved = cloudTemplates.filter(tpl => tpl.status === 'APPROVED');
     sel.innerHTML = approved.length
-      ? approved.map(t => `<option value="${esc(t.name)}::${esc(t.language)}">${esc(t.name)} (${esc(t.language)})</option>`).join('')
-      : '<option value="">— nenhum template APROVADO encontrado —</option>';
+      ? approved.map(tpl => `<option value="${esc(tpl.name)}::${esc(tpl.language)}">${esc(tpl.name)} (${esc(tpl.language)})</option>`).join('')
+      : `<option value="">${esc(t('template.none'))}</option>`;
     renderTemplateParams();
   } catch (err) {
-    toast('Erro listando templates: ' + err, 'error');
+    toast(t('toast.templatesError', { err }), 'error');
     document.getElementById('camp-template-name').innerHTML =
-      '<option value="">— erro ao carregar —</option>';
+      `<option value="">${esc(t('template.loadError'))}</option>`;
   }
 }
 
@@ -997,7 +1023,7 @@ function currentTemplate() {
   const val = sel.value;
   if (!val) return null;
   const [name, language] = val.split('::');
-  return cloudTemplates.find(t => t.name === name && t.language === language) || null;
+  return cloudTemplates.find(tpl => tpl.name === name && tpl.language === language) || null;
 }
 
 function renderTemplateParams() {
@@ -1012,14 +1038,16 @@ function renderTemplateParams() {
   previewEl.textContent = tmpl.body_text || '';
   const n = tmpl.body_param_count || 0;
   if (n === 0) {
-    paramsEl.innerHTML = '<p class="hint">Template sem parâmetros.</p>';
+    paramsEl.innerHTML = `<p class="hint">${esc(t('template.noParams'))}</p>`;
     return;
   }
   const defaults = ['{firstname}', '{nome}', '{whatsapp}', '{tag}'];
-  let html = '<p class="hint" style="margin-top:8px">Parâmetros do template — use variáveis tipo <code>{firstname}</code> ou texto fixo:</p>';
+  // NOTE: template.paramsHint contains a literal {firstname} example, so it is
+  // looked up WITHOUT vars to skip interpolation.
+  let html = `<p class="hint" style="margin-top:8px">${t('template.paramsHint')}</p>`;
   for (let i = 1; i <= n; i++) {
     const def = defaults[i - 1] || '';
-    html += `<label class="field"><span>Param ${i}</span>
+    html += `<label class="field"><span>${esc(t('template.param', { i }))}</span>
       <input type="text" class="tmpl-param" data-idx="${i - 1}" value="${esc(def)}"></label>`;
   }
   paramsEl.innerHTML = html;
@@ -1030,19 +1058,19 @@ async function onAttachmentPicked(e) {
   e.target.value = '';
   if (!file) return;
   if (file.size > MAX_ATTACHMENT_BYTES) {
-    toast(`Arquivo grande demais (limite 64 MB)`, 'error');
+    toast(t('toast.fileTooLarge'), 'error');
     return;
   }
   try {
-    toast('Carregando anexo…', 'ok');
+    toast(t('toast.loadingAttach'), 'ok');
     const b64 = await fileToBase64(file);
     const path = await invoke('vorcaro_stage_attachment', { name: file.name, b64 });
     // Phase E.2: replace any existing attachment (single per campaign).
     campAttachments = [{ path, name: file.name, size: file.size }];
     renderAttachmentList();
-    toast('Anexo pronto', 'ok');
+    toast(t('toast.attachReady'), 'ok');
   } catch (err) {
-    toast('Erro ao anexar: ' + err, 'error');
+    toast(t('toast.error', { err }), 'error');
   }
 }
 
@@ -1066,7 +1094,7 @@ function renderAttachmentList() {
     <div class="attach-chip">
       <span class="name">${esc(a.name)}</span>
       <span class="size">${formatSize(a.size)}</span>
-      <button data-idx="${i}">remover</button>
+      <button data-idx="${i}">${esc(t('attach.remove'))}</button>
     </div>`).join('');
   list.querySelectorAll('button').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -1084,7 +1112,7 @@ function formatSize(bytes) {
 
 function updateStartButtonLabel() {
   const dt = document.getElementById('camp-schedule').value;
-  document.getElementById('btn-start').textContent = dt ? 'Agendar envio' : 'Iniciar envio';
+  document.getElementById('btn-start').textContent = dt ? t('btn.start.schedule') : t('btn.start');
 }
 
 let cloudTemplates = [];
@@ -1115,14 +1143,14 @@ function renderCampaignForm() {
     ? state.lists.map(l =>
         `<option value="${l.id}">${esc(l.name)} (${(l.contact_ids || []).length})</option>`
       ).join('')
-    : '<option value="">— sem listas —</option>';
+    : `<option value="">${esc(t('campaign.list.none'))}</option>`;
 
   // Tags dropdown
   const tagSel = document.getElementById('camp-tag-name');
   const tags = allTags();
   tagSel.innerHTML = tags.length
-    ? tags.map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join('')
-    : '<option value="">— sem tags —</option>';
+    ? tags.map(tg => `<option value="${esc(tg)}">${esc(tg)}</option>`).join('')
+    : `<option value="">${esc(t('campaign.tag.none'))}</option>`;
 
   // Ad-hoc count
   document.getElementById('camp-adhoc-count').textContent = state.selectedIds.size;
@@ -1147,10 +1175,10 @@ function renderCampaignRecent() {
         return `
           <li data-id="${c.id}">
             <span class="pill ${stClass}">${stClass}</span> ${esc(c.name)}
-            <span class="meta">${esc(c.platform)} · ${(c.progress || []).length} envio(s)</span>
+            <span class="meta">${esc(t('campaign.recent.meta', { platform: c.platform, n: (c.progress || []).length }))}</span>
           </li>`;
       }).join('')
-    : '<li style="cursor:default;color:var(--fg-dim)">— nenhuma campanha ainda —</li>';
+    : `<li style="cursor:default;color:var(--fg-dim)">${esc(t('campaign.recent.none'))}</li>`;
   ul.querySelectorAll('li[data-id]').forEach(li => {
     li.addEventListener('click', () => {
       activeCampaignId = li.dataset.id;
@@ -1166,15 +1194,15 @@ function readCampaignSpec() {
   let targets;
   if (mode === 'list') {
     const listId = document.getElementById('camp-list-id').value;
-    if (!listId) throw 'selecione uma lista';
+    if (!listId) throw t('err.selectList');
     targets = { kind: 'list', value: listId };
   } else if (mode === 'tag') {
     const tag = document.getElementById('camp-tag-name').value;
-    if (!tag) throw 'selecione uma tag';
+    if (!tag) throw t('err.selectTag');
     targets = { kind: 'tag', value: tag };
   } else {
     const ids = [...state.selectedIds];
-    if (ids.length === 0) throw 'selecione contatos na aba Contatos';
+    if (ids.length === 0) throw t('err.selectContacts');
     targets = { kind: 'ad_hoc', value: ids };
   }
   // datetime-local → ISO 8601 UTC. Empty = immediate.
@@ -1182,9 +1210,9 @@ function readCampaignSpec() {
   const dt = document.getElementById('camp-schedule').value;
   if (dt) {
     const local = new Date(dt);
-    if (Number.isNaN(local.getTime())) throw 'data/hora inválida';
+    if (Number.isNaN(local.getTime())) throw t('err.invalidDate');
     if (local.getTime() < Date.now() - 60_000) {
-      throw 'a data agendada já passou';
+      throw t('err.datePassed');
     }
     scheduledAt = local.toISOString();
   }
@@ -1195,7 +1223,7 @@ function readCampaignSpec() {
   let template = null;
   if (platform === 'whatsapp_cloud_api' && cloudMsgType === 'template') {
     const tmpl = currentTemplate();
-    if (!tmpl) throw 'selecione um template aprovado';
+    if (!tmpl) throw t('err.selectTemplate');
     const params = Array.from(document.querySelectorAll('.tmpl-param'))
       .sort((a, b) => Number(a.dataset.idx) - Number(b.dataset.idx))
       .map(i => i.value.trim());
@@ -1207,13 +1235,13 @@ function readCampaignSpec() {
   if (platform !== 'whatsapp_cloud_api') {
     const wsVal = document.getElementById('camp-workspace').value;
     if (!wsVal) {
-      throw `Nenhum ${PLATFORM_SHORT[platform] || platform} adicionado em BigBox. Adicione na barra lateral primeiro.`;
+      throw t('workspace.noneInBigbox', { platform: PLATFORM_SHORT[platform] || platform });
     }
     workspaceId = wsVal;
   }
 
   return {
-    name: document.getElementById('camp-name').value.trim() || 'Campanha sem nome',
+    name: document.getElementById('camp-name').value.trim() || t('campaign.unnamed'),
     body: document.getElementById('camp-body').value,
     platform,
     targets,
@@ -1237,19 +1265,17 @@ async function onPreview() {
     const box = document.getElementById('camp-preview-box');
     let warn = '';
     if (p.warn) {
-      warn = `<div class="warn">⚠ Mais de ${state.settings.warn_threshold || 20} destinatários.
-        Envios em massa pelo WhatsApp Web podem causar <strong>banimento da conta</strong>.
-        Considere usar listas menores ou aumentar o atraso em Configurações.</div>`;
+      warn = `<div class="warn">${t('preview.warn', { threshold: state.settings.warn_threshold || 20 })}</div>`;
     }
     box.innerHTML = `
-      <div class="row"><span>Destinatários</span><b>${p.recipient_count}</b></div>
-      <div class="row"><span>Com identificador para ${esc(spec.platform)}</span><b>${p.recipients_with_handle}</b></div>
-      <div class="row"><span>Sem identificador (serão pulados)</span><b>${p.recipients_missing_handle}</b></div>
-      <div class="row"><span>Saldo diário restante</span><b>${p.daily_cap_remaining}</b></div>
+      <div class="row"><span>${esc(t('preview.recipients'))}</span><b>${p.recipient_count}</b></div>
+      <div class="row"><span>${esc(t('preview.withHandle', { platform: spec.platform }))}</span><b>${p.recipients_with_handle}</b></div>
+      <div class="row"><span>${esc(t('preview.missingHandle'))}</span><b>${p.recipients_missing_handle}</b></div>
+      <div class="row"><span>${esc(t('preview.dailyRemaining'))}</span><b>${p.daily_cap_remaining}</b></div>
       ${warn}`;
     box.hidden = false;
   } catch (err) {
-    toast('Erro no preview: ' + err, 'error');
+    toast(t('toast.previewError', { err }), 'error');
   }
 }
 
@@ -1258,7 +1284,7 @@ async function onStartCampaign() {
   try { spec = readCampaignSpec(); }
   catch (msg) { toast(String(msg), 'error'); return; }
   if (!spec.body.trim() && !spec.template) {
-    toast('Mensagem vazia', 'error');
+    toast(t('toast.emptyMessage'), 'error');
     return;
   }
 
@@ -1271,29 +1297,36 @@ async function onStartCampaign() {
       platform: spec.platform,
     });
   } catch (err) {
-    toast('Erro no preview: ' + err, 'error');
+    toast(t('toast.previewError', { err }), 'error');
     return;
   }
   if (p.recipient_count === 0) {
-    toast('Nenhum destinatário encontrado pra esta seleção', 'error');
+    toast(t('toast.noRecipients'), 'error');
     return;
   }
   if (p.recipients_with_handle === 0) {
     const field = spec.platform === 'whatsapp_business_web' ? 'WA Business'
                 : spec.platform === 'telegram' ? 'Telegram'
                 : 'WhatsApp';
-    toast(`Nenhum dos ${p.recipient_count} contatos tem o campo "${field}" preenchido. Edite os contatos ou troque a plataforma.`, 'error');
+    toast(t('toast.noHandles', { count: p.recipient_count, field }), 'error');
     return;
   }
 
-  const action = spec.scheduled_at ? 'Agendar' : 'Iniciar';
+  const action = spec.scheduled_at ? t('action.schedule') : t('action.start');
   const when = spec.scheduled_at
-    ? ` em ${new Date(spec.scheduled_at).toLocaleString()}`
-    : ' agora';
+    ? t('when.at', { datetime: new Date(spec.scheduled_at).toLocaleString() })
+    : t('when.now');
   const skipped = p.recipients_missing_handle > 0
-    ? ` (${p.recipients_missing_handle} serão pulados por falta de número)`
+    ? t('confirm.startCampaign.skipped', { n: p.recipients_missing_handle })
     : '';
-  if (!confirm(`${action} envio pra ${p.recipients_with_handle} destinatário(s)${skipped}${when}?\nAtraso entre envios: ${state.settings.min_delay_secs}-${state.settings.max_delay_secs}s.`)) {
+  if (!confirm(t('confirm.startCampaign', {
+    action,
+    count: p.recipients_with_handle,
+    skipped,
+    when,
+    min: state.settings.min_delay_secs,
+    max: state.settings.max_delay_secs,
+  }))) {
     return;
   }
   try {
@@ -1316,9 +1349,9 @@ async function onStartCampaign() {
     renderLogsCampaignSelect();
     document.querySelector('.tab[data-tab="logs"]').click();
     renderLogsForActive();
-    toast('Campanha iniciada', 'ok');
+    toast(t('toast.campaignStarted'), 'ok');
   } catch (err) {
-    toast('Erro: ' + err, 'error');
+    toast(t('toast.error', { err }), 'error');
   }
 }
 
@@ -1334,7 +1367,7 @@ function bindLogs() {
     () => activeCampaignId && controlCampaign('resume'));
   document.getElementById('btn-abort').addEventListener('click', () => {
     if (!activeCampaignId) return;
-    if (!confirm('Abortar campanha?')) return;
+    if (!confirm(t('confirm.abort'))) return;
     controlCampaign('abort');
   });
 }
@@ -1348,15 +1381,15 @@ async function controlCampaign(action) {
   })[action];
   try {
     await invoke(cmd, { id });
-    toast(`Comando ${action} enviado`, 'ok');
-  } catch (err) { toast('Erro: ' + err, 'error'); }
+    toast(t('toast.controlSent', { action }), 'ok');
+  } catch (err) { toast(t('toast.error', { err }), 'error'); }
 }
 
 function renderLogsCampaignSelect() {
   const sel = document.getElementById('logs-campaign-select');
   const items = [...state.campaigns]
     .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
-  sel.innerHTML = '<option value="">— selecione uma campanha —</option>' +
+  sel.innerHTML = `<option value="">${esc(t('logs.option.select'))}</option>` +
     items.map(c =>
       `<option value="${c.id}" ${c.id === activeCampaignId ? 'selected' : ''}>${esc(c.name)} (${esc(c.status || 'draft')})</option>`
     ).join('');
@@ -1393,11 +1426,11 @@ function renderLogsForActive() {
   const counts = { sent: 0, failed: 0, invalid_number: 0, skipped: 0, queued: 0 };
   allAttempts.forEach(a => { counts[a.status] = (counts[a.status] || 0) + 1; });
   summary.innerHTML = `
-    <span class="stat"><b>Total:</b> ${allAttempts.length}</span>
-    <span class="stat"><b>✓ Enviados:</b> ${counts.sent}</span>
-    <span class="stat"><b>✗ Falha:</b> ${counts.failed}</span>
-    <span class="stat"><b># Número inválido:</b> ${counts.invalid_number}</span>
-    <span class="stat"><b>↷ Pulados:</b> ${counts.skipped}</span>`;
+    <span class="stat"><b>${esc(t('logs.summary.total'))}</b> ${allAttempts.length}</span>
+    <span class="stat"><b>${esc(t('logs.summary.sent'))}</b> ${counts.sent}</span>
+    <span class="stat"><b>${esc(t('logs.summary.failed'))}</b> ${counts.failed}</span>
+    <span class="stat"><b>${esc(t('logs.summary.invalid'))}</b> ${counts.invalid_number}</span>
+    <span class="stat"><b>${esc(t('logs.summary.skipped'))}</b> ${counts.skipped}</span>`;
 
   body.innerHTML = allAttempts.slice().reverse().map(a => {
     const contact = state.contacts.find(c => c.id === a.contact_id);
@@ -1410,7 +1443,7 @@ function renderLogsForActive() {
         <td class="status-cell ${stKey}">${esc(a.status)}</td>
         <td style="color:var(--fg-dim);font-size:12px">${esc(a.error || '')}</td>
       </tr>`;
-  }).join('') || '<tr><td colspan="4" class="empty">Sem envios ainda</td></tr>';
+  }).join('') || `<tr><td colspan="4" class="empty">${esc(t('logs.noSends'))}</td></tr>`;
 }
 
 async function listenCampaignProgress() {
@@ -1436,9 +1469,9 @@ async function listenCampaignProgress() {
       slot.status = 'paused';
       const camp = state.campaigns.find(c => c.id === cid); if (camp) camp.status = 'paused';
       if (payload.kind === 'auto-paused') {
-        toast(`Campanha pausada após ${payload.payload.consecutive_failures} falhas seguidas`, 'error');
+        toast(t('toast.autoPaused', { n: payload.payload.consecutive_failures }), 'error');
       } else if (payload.kind === 'daily-cap-reached') {
-        toast('Limite diário atingido — campanha pausada', 'error');
+        toast(t('toast.dailyCapReached'), 'error');
       }
     } else if (payload.kind === 'campaign-finished') {
       slot.status = payload.payload.status;
