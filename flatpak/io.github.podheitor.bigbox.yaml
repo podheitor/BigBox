@@ -64,5 +64,5 @@ modules:
           project-id: 0  # TODO: register at release-monitoring.org and replace
           stable-only: true
           url-template: https://github.com/podheitor/BigBox/archive/refs/tags/v$version.tar.gz
-        tag: v0.1.3
-        commit: bcbe32f7b0341f36183d14c65ffc984cac3143ce
+        tag: v0.1.4
+        commit: e8cf4058e41fc2f67c658c94d852909b3b7d5bbe

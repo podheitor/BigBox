@@ -10,7 +10,7 @@
       and `flatpak/io.github.podheitor.bigbox.metainfo.xml` into the root
       of your fork's `new-pr`-based branch (Flathub expects them there,
       not under `flatpak/`).
-    - Manifest already pins tag v0.1.3 / commit bcbe32f and runtime
+    - Manifest already pins tag v0.1.4 / commit e8cf405 and runtime
       org.gnome.Platform//50, which is the current supported runtime.
     - Keep the lines below the "DO NOT modify" marker untouched.
     - After opening, post a short follow-up comment acknowledging the
