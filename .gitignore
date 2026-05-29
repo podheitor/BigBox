@@ -24,6 +24,12 @@ Thumbs.db
 context/
 contexto/
 
+# Local connection notes (contains credentials — NEVER commit)
+connections.md
+
+# Session handoff scratch note (contains deploy creds — NEVER commit)
+start_here.md
+
 # Screenshots (large binaries)
 # Keep icons, ignore screenshots
 screenshots/

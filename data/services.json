@@ -8,6 +8,22 @@
     "user_agent_override": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
   },
   {
+    "id": "whatsapp_business",
+    "name": "WhatsApp Business",
+    "url": "https://web.whatsapp.com",
+    "icon": null,
+    "color": "#128C7E",
+    "user_agent_override": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+  },
+  {
+    "id": "vorcaro",
+    "name": "Vorcaro's Studio",
+    "url": "local://vorcaro",
+    "icon": null,
+    "color": "#7c3aed",
+    "user_agent_override": null
+  },
+  {
     "id": "telegram",
     "name": "Telegram",
     "url": "https://web.telegram.org/k/",

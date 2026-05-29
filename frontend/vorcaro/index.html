@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Vorcaro's Studio</title>
+  <link rel="stylesheet" href="studio.css">
+</head>
+<body>
+  <header class="studio-header">
+    <div class="studio-title">
+      <span class="studio-dot"></span>
+      <h1>Vorcaro's Studio</h1>
+      <span class="studio-sub">mensagens em lote para WhatsApp & Telegram</span>
+    </div>
+    <nav class="studio-tabs">
+      <button class="tab active" data-tab="contacts">Contatos</button>
+      <button class="tab" data-tab="lists">Listas</button>
+      <button class="tab" data-tab="campaign">Campanha</button>
+      <button class="tab" data-tab="logs">Logs</button>
+      <button class="tab" data-tab="settings">Configurações</button>
+    </nav>
+  </header>
+
+  <main class="studio-main">
+
+    <!-- ─── CONTACTS ─────────────────────────────────────────── -->
+    <section class="panel active" data-panel="contacts">
+      <div class="panel-toolbar">
+        <input type="search" id="contact-search" placeholder="Buscar por nome, telefone ou tag…">
+        <select id="contact-tag-filter">
+          <option value="">Todas as tags</option>
+        </select>
+        <div class="spacer"></div>
+        <select id="scrape-workspace" title="Conta a raspar"></select>
+        <select id="scrape-label" title="Filtrar por etiqueta antes de raspar">
+          <option value="">— sem filtro de etiqueta —</option>
+        </select>
+        <button class="btn btn-small" id="btn-refresh-labels" title="Carregar etiquetas desta conta">↻</button>
+        <button class="btn btn-small" id="btn-debug-dom" title="Diagnosticar DOM do topo do painel (cole o resultado pro dev)">🐞</button>
+        <button class="btn" id="btn-scrape" title="Raspar conversas da conta selecionada">Raspar</button>
+        <span style="width:1px;background:var(--border);height:18px;margin:0 4px"></span>
+        <button class="btn" id="btn-new-contact">+ Novo contato</button>
+        <button class="btn" id="btn-import-csv">Importar CSV</button>
+        <input type="file" id="csv-file" accept=".csv,text/csv" hidden>
+      </div>
+
+      <div class="bulk-bar" id="bulk-bar" hidden>
+        <span id="bulk-count">0 selecionados</span>
+        <button class="btn btn-small" id="btn-bulk-tag">Aplicar tag…</button>
+        <button class="btn btn-small" id="btn-bulk-untag">Remover tag…</button>
+        <button class="btn btn-small" id="btn-bulk-add-list">Adicionar à lista…</button>
+        <button class="btn btn-small btn-danger" id="btn-bulk-delete">Apagar</button>
+      </div>
+
+      <div class="table-wrap">
+        <table class="contacts-table">
+          <thead>
+            <tr>
+              <th class="col-check"><input type="checkbox" id="check-all"></th>
+              <th>Nome</th>
+              <th>WhatsApp</th>
+              <th>WA Business</th>
+              <th>Telegram</th>
+              <th>Tags</th>
+              <th class="col-actions"></th>
+            </tr>
+          </thead>
+          <tbody id="contacts-body"></tbody>
+        </table>
+        <p class="empty" id="contacts-empty" hidden>
+          Sem contatos ainda. Adicione manualmente, importe um CSV, ou raspe a conta
+          selecionada acima (a conta precisa estar aberta e logada no BigBox).
+        </p>
+        <p class="hint" style="margin-top:8px;font-size:12px;color:var(--fg-dim)">
+          <strong>Tags:</strong> rótulos que você cria. Edite um contato e preencha a caixa
+          <em>Tags</em> (separe por vírgula), ou selecione vários contatos e use
+          <em>Aplicar tag…</em> na barra acima. Filtre por tag no menu suspenso ao lado
+          da busca, ou use “Por tag” na aba <strong>Campanha</strong>.
+        </p>
+      </div>
+    </section>
+
+    <!-- ─── LISTS ───────────────────────────────────────────── -->
+    <section class="panel" data-panel="lists">
+      <div class="panel-toolbar">
+        <button class="btn" id="btn-new-list">+ Nova lista</button>
+      </div>
+      <div class="lists-split">
+        <aside class="lists-side">
+          <ul id="lists-ul"></ul>
+          <p class="empty" id="lists-empty" hidden>
+            Nenhuma lista ainda. Listas agrupam contatos para envio em campanhas.
+          </p>
+        </aside>
+        <section class="list-detail" id="list-detail" hidden>
+          <header class="list-detail-head">
+            <input type="text" id="list-name-input" placeholder="Nome da lista">
+            <button class="btn btn-small" id="btn-rename-list">Renomear</button>
+            <button class="btn btn-small btn-danger" id="btn-delete-list">Apagar lista</button>
+          </header>
+          <div class="list-members">
+            <h3>Membros (<span id="list-member-count">0</span>)</h3>
+            <ul id="list-members-ul"></ul>
+          </div>
+          <div class="list-add">
+            <h3>Adicionar contatos</h3>
+            <input type="search" id="list-add-search" placeholder="Buscar contatos para adicionar…">
+            <ul id="list-add-ul"></ul>
+          </div>
+        </section>
+      </div>
+    </section>
+
+    <!-- ─── CAMPAIGN ────────────────────────────────────────── -->
+    <section class="panel" data-panel="campaign">
+      <div class="campaign-layout">
+        <div class="campaign-form">
+          <h2>Nova campanha</h2>
+
+          <label class="field">
+            <span>Nome da campanha</span>
+            <input type="text" id="camp-name" placeholder="Ex.: Promo de aniversário">
+          </label>
+
+          <label class="field">
+            <span>Plataforma</span>
+            <select id="camp-platform">
+              <option value="whatsapp_web">WhatsApp (Web)</option>
+              <option value="whatsapp_business_web">WhatsApp Business (Web)</option>
+              <option value="telegram">Telegram</option>
+              <option value="whatsapp_cloud_api">WhatsApp Cloud API (Meta)</option>
+            </select>
+          </label>
+
+          <label class="field" id="camp-workspace-row">
+            <span>Conta (workspace) — qual aba do BigBox vai mandar</span>
+            <select id="camp-workspace"></select>
+          </label>
+
+          <label class="field">
+            <span>Destinatários</span>
+            <select id="camp-target-mode">
+              <option value="list">Por lista salva</option>
+              <option value="tag">Por tag</option>
+              <option value="adhoc">Contatos selecionados na aba Contatos</option>
+            </select>
+          </label>
+
+          <label class="field" id="camp-list-row">
+            <span>Lista</span>
+            <select id="camp-list-id"></select>
+          </label>
+
+          <label class="field" id="camp-tag-row" hidden>
+            <span>Tag</span>
+            <select id="camp-tag-name"></select>
+          </label>
+
+          <p id="camp-adhoc-row" class="hint" hidden>
+            Use a aba <strong>Contatos</strong> para selecionar os destinatários
+            via as checkboxes. <span id="camp-adhoc-count">0</span> selecionado(s).
+          </p>
+
+          <div id="camp-cloud-section" hidden>
+            <label class="field">
+              <span>Tipo de mensagem (Cloud API)</span>
+              <select id="camp-cloud-msg-type">
+                <option value="template">Template aprovado (recomendado)</option>
+                <option value="freeform">Texto livre (só funciona dentro da janela 24h)</option>
+              </select>
+            </label>
+            <label class="field" id="camp-template-row">
+              <span>Template</span>
+              <div style="display:flex;gap:6px">
+                <select id="camp-template-name" style="flex:1"></select>
+                <button type="button" class="btn btn-small" id="btn-refresh-templates">↻</button>
+              </div>
+              <small id="camp-template-preview" style="color:var(--fg-dim);font-size:11px;margin-top:4px;white-space:pre-wrap"></small>
+            </label>
+            <div id="camp-template-params"></div>
+          </div>
+
+          <label class="field" id="camp-body-row">
+            <span>Mensagem — variáveis: <code>{nome}</code>, <code>{firstname}</code>, <code>{whatsapp}</code>, <code>{telegram}</code>, <code>{tag}</code>, <code>{notes}</code></span>
+            <textarea id="camp-body" rows="6" placeholder="Olá {firstname}, …"></textarea>
+            <div class="emoji-bar">
+              <button type="button" class="btn btn-small" id="btn-emoji" title="Inserir emoji">😀 Emojis</button>
+              <span class="hint" style="font-size:11px;color:var(--fg-dim)">
+                ou use o atalho do sistema (KDE: <kbd>Meta+.</kbd>, GNOME: <kbd>Ctrl+;</kbd>)
+              </span>
+            </div>
+          </label>
+
+          <label class="field">
+            <span>Anexo (opcional — imagem, vídeo, documento ou áudio)</span>
+            <div class="attach-row">
+              <button type="button" class="btn btn-small" id="btn-pick-attachment">+ Anexar arquivo</button>
+              <input type="file" id="camp-file" hidden>
+              <div id="camp-attach-list"></div>
+            </div>
+          </label>
+
+          <label class="field">
+            <span>Agendar envio (opcional — deixe em branco para iniciar agora)</span>
+            <input type="datetime-local" id="camp-schedule">
+          </label>
+
+          <div class="campaign-actions">
+            <button class="btn" id="btn-preview">Pré-visualizar</button>
+            <button class="btn btn-primary" id="btn-start">Iniciar envio</button>
+          </div>
+
+          <div id="camp-preview-box" class="preview-box" hidden></div>
+        </div>
+
+        <aside class="campaign-side">
+          <h3>Campanhas recentes</h3>
+          <ul id="camp-recent"></ul>
+        </aside>
+      </div>
+    </section>
+
+    <!-- ─── LOGS ────────────────────────────────────────────── -->
+    <section class="panel" data-panel="logs">
+      <div class="logs-toolbar">
+        <select id="logs-campaign-select"></select>
+        <span id="logs-status-pill" class="pill">—</span>
+        <div class="spacer"></div>
+        <button class="btn btn-small" id="btn-pause">Pausar</button>
+        <button class="btn btn-small" id="btn-resume">Retomar</button>
+        <button class="btn btn-small btn-danger" id="btn-abort">Abortar</button>
+      </div>
+      <div class="logs-summary" id="logs-summary"></div>
+      <div class="table-wrap">
+        <table class="contacts-table">
+          <thead>
+            <tr>
+              <th>Quando</th>
+              <th>Contato</th>
+              <th>Status</th>
+              <th>Erro</th>
+            </tr>
+          </thead>
+          <tbody id="logs-body"></tbody>
+        </table>
+        <p class="empty" id="logs-empty">Selecione uma campanha acima para ver o progresso.</p>
+      </div>
+    </section>
+
+    <!-- ─── SETTINGS ────────────────────────────────────────── -->
+    <section class="panel" data-panel="settings">
+      <div class="settings-form">
+        <h2>Configurações de envio</h2>
+        <p class="hint">
+          Estes valores entram em efeito quando a Campanha for ativada na Phase C.
+          Os <em>defaults</em> são conservadores para reduzir o risco de banimento do WhatsApp.
+        </p>
+
+        <label>
+          <span>Atraso mínimo entre envios (segundos)</span>
+          <input type="number" id="set-min-delay" min="0" max="3600">
+        </label>
+        <label>
+          <span>Atraso máximo entre envios (segundos)</span>
+          <input type="number" id="set-max-delay" min="0" max="3600">
+        </label>
+        <label>
+          <span>Limite diário por plataforma</span>
+          <input type="number" id="set-daily-cap" min="0" max="100000">
+        </label>
+        <label>
+          <span>Aviso quando destinatários &gt;</span>
+          <input type="number" id="set-warn" min="0" max="100000">
+        </label>
+        <label>
+          <span>Pausa automática após N falhas seguidas</span>
+          <input type="number" id="set-autopause" min="0" max="100">
+        </label>
+        <label>
+          <span>Tentativas extras por destinatário em caso de falha</span>
+          <input type="number" id="set-retries" min="0" max="10">
+        </label>
+
+        <div class="settings-actions">
+          <button class="btn" id="btn-save-settings">Salvar</button>
+          <span id="settings-saved-flag" class="ok" hidden>Salvo ✓</span>
+        </div>
+
+        <hr style="border:0;border-top:1px solid var(--border);margin:24px 0">
+
+        <h2>WhatsApp Cloud API (Meta)</h2>
+        <p class="hint">
+          Conta verificada na Meta Business + Permanent Access Token. Sem janela de 24h
+          só dá pra mandar <strong>templates aprovados</strong>. Anexos via Cloud API ficam
+          para a Phase F.2.
+        </p>
+        <label>
+          <span>Access Token (não é exibido depois de salvo)</span>
+          <input type="password" id="cloud-token" placeholder="EAA…">
+        </label>
+        <label>
+          <span>Phone Number ID</span>
+          <input type="text" id="cloud-phone-id">
+        </label>
+        <label>
+          <span>WhatsApp Business Account ID (para templates)</span>
+          <input type="text" id="cloud-waba-id">
+        </label>
+        <label>
+          <span>API version (opcional)</span>
+          <input type="text" id="cloud-version" placeholder="v17.0">
+        </label>
+        <div class="settings-actions">
+          <button class="btn" id="btn-save-cloud">Salvar credenciais</button>
+          <button class="btn" id="btn-test-cloud">Testar conexão</button>
+          <span id="cloud-status" class="ok" hidden></span>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ─── Contact modal ──────────────────────────────────────── -->
+  <dialog id="dlg-contact">
+    <form id="contact-form">
+      <header><h2 id="dlg-contact-title">Novo contato</h2></header>
+      <label><span>Nome</span><input type="text" name="display_name" required></label>
+      <label><span>WhatsApp (E.164)</span><input type="text" name="whatsapp" placeholder="+5561912345678"></label>
+      <label><span>WhatsApp Business</span><input type="text" name="whatsapp_business" placeholder="+5561912345678"></label>
+      <label><span>Telegram (@usuário ou telefone)</span><input type="text" name="telegram" placeholder="@fulano"></label>
+      <label><span>Tags (separe por vírgula)</span><input type="text" name="tags" placeholder="clientes-vip, família, …"></label>
+      <label><span>Notas</span><textarea name="notes" rows="3"></textarea></label>
+      <footer>
+        <button type="button" class="btn" id="btn-contact-cancel">Cancelar</button>
+        <button type="submit" class="btn btn-primary">Salvar</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <!-- ─── Prompt modal (lightweight reuse) ──────────────────── -->
+  <dialog id="dlg-prompt">
+    <form method="dialog">
+      <header><h2 id="dlg-prompt-title">…</h2></header>
+      <label><span id="dlg-prompt-label">…</span>
+        <input type="text" id="dlg-prompt-input" required>
+      </label>
+      <footer>
+        <button type="button" class="btn" id="btn-prompt-cancel">Cancelar</button>
+        <button type="submit" class="btn btn-primary">OK</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <!-- ─── DOM diagnostic dump modal ─────────────────────────── -->
+  <dialog id="dlg-debug">
+    <header style="padding:18px 22px 0">
+      <h2>Diagnóstico do DOM (topo do painel)</h2>
+      <p style="color:var(--fg-dim);font-size:12px;margin:4px 0 0">
+        Copie tudo abaixo e cole pro dev para que ele escreva o seletor correto.
+      </p>
+    </header>
+    <div style="padding:12px 22px 0">
+      <textarea id="debug-dump-text" rows="20" readonly
+        style="width:100%;background:var(--bg);color:var(--fg);border:1px solid var(--border);
+               border-radius:6px;font-family:monospace;font-size:11px;padding:8px;white-space:pre;overflow:auto"></textarea>
+    </div>
+    <footer style="padding:12px 22px 18px;display:flex;justify-content:flex-end;gap:8px">
+      <button type="button" class="btn" id="btn-debug-copy">Copiar</button>
+      <button type="button" class="btn btn-primary" id="btn-debug-close">Fechar</button>
+    </footer>
+  </dialog>
+
+  <!-- ─── Scrape result modal ───────────────────────────────── -->
+  <dialog id="dlg-scrape">
+    <header style="padding:18px 22px 0">
+      <h2 id="dlg-scrape-title">Resultado da raspagem</h2>
+      <p id="dlg-scrape-status" style="color:var(--fg-dim);font-size:12px;margin:4px 0 0"></p>
+    </header>
+    <div style="padding:12px 22px 0">
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+        <label style="flex-direction:row;gap:6px;color:var(--fg)">
+          <input type="checkbox" id="scrape-check-all" checked>
+          <span>Selecionar todos</span>
+        </label>
+        <input type="search" id="scrape-search" placeholder="Filtrar…" style="margin-left:auto;background:var(--bg);border:1px solid var(--border);color:var(--fg);padding:5px 8px;border-radius:6px;font-size:12px;width:200px">
+      </div>
+      <div style="max-height:340px;overflow:auto;border:1px solid var(--border);border-radius:6px">
+        <table class="contacts-table" id="scrape-table">
+          <thead>
+            <tr>
+              <th class="col-check"></th>
+              <th>Nome</th>
+              <th>Telefone / Username</th>
+            </tr>
+          </thead>
+          <tbody id="scrape-body"></tbody>
+        </table>
+      </div>
+    </div>
+    <footer style="padding:12px 22px 18px;display:flex;justify-content:flex-end;gap:8px">
+      <button type="button" class="btn" id="btn-scrape-cancel">Cancelar</button>
+      <button type="button" class="btn btn-primary" id="btn-scrape-import">Importar selecionados</button>
+    </footer>
+  </dialog>
+
+  <!-- ─── Choose-list modal ─────────────────────────────────── -->
+  <dialog id="dlg-pick-list">
+    <form method="dialog">
+      <header><h2>Adicionar à lista</h2></header>
+      <select id="pick-list-select"></select>
+      <footer>
+        <button type="button" class="btn" id="btn-pick-list-cancel">Cancelar</button>
+        <button type="submit" class="btn btn-primary">Adicionar</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="studio.js"></script>
+</body>
+</html>

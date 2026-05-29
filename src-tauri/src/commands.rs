@@ -816,6 +816,13 @@ fn ensure_service_webview_created(
     let session_dir = services::session_dir(service_id);
     std::fs::create_dir_all(&session_dir).ok();
 
+    // Vorcaro's Studio is a local HTML panel — no external URL, no chat-service
+    // injection scripts, no UA override. Treated like any other sidebar service
+    // for sizing/visibility purposes but loaded from frontend/vorcaro/index.html.
+    if is_vorcaro_panel(service_id) {
+        return create_vorcaro_panel(app, state, &window, label, session_dir);
+    }
+
     let parsed_url: tauri::Url = url.parse().map_err(|e| format!("{e}"))?;
     let badge_script = BADGE_MONITOR_SCRIPT.replace("__BADGE_LABEL__", label);
     let mut builder = WebviewBuilder::new(label, WebviewUrl::External(parsed_url))
@@ -826,6 +833,14 @@ fn ensure_service_webview_created(
         .initialization_script(CODEC_FILTER_SCRIPT)
         .initialization_script(BLOB_VIDEO_PATCH)
         .initialization_script(ZOOM_SHORTCUT_SCRIPT);
+
+    // Vorcaro driver — scrape-only in Phase B. Only injected into the chat
+    // services we can actually drive; everywhere else it's pure overhead.
+    if is_whatsapp_service(service_id) {
+        builder = builder.initialization_script(crate::vorcaro::drivers::VORCARO_WHATSAPP_DRIVER);
+    } else if is_telegram_service(service_id) {
+        builder = builder.initialization_script(crate::vorcaro::drivers::VORCARO_TELEGRAM_DRIVER);
+    }
 
     // Diagnostic probe — opt-in via BB_DEBUG_CODEC=1. The log() helpers
     // inside BLOB_VIDEO_PATCH and CODEC_PROBE_SCRIPT no-op unless
@@ -1109,4 +1124,58 @@ pub fn bb_log(line: String) {
 
 fn svc_label(service_id: &str) -> String {
     format!("svc-{service_id}")
+}
+
+/// True for the built-in Vorcaro's Studio panel and any future "local://"
+/// pseudo-services. The frontend catalog uses `id = "vorcaro"`.
+fn is_vorcaro_panel(service_id: &str) -> bool {
+    service_id == "vorcaro" || service_id.starts_with("vorcaro_")
+}
+
+/// Service ids that host a WhatsApp Web view we can scrape from.
+/// Covers personal + Business plus user-renamed multi-instances.
+pub(crate) fn is_whatsapp_service(service_id: &str) -> bool {
+    service_id == "whatsapp"
+        || service_id == "whatsapp_business"
+        || service_id.starts_with("whatsapp_")
+}
+
+pub(crate) fn is_telegram_service(service_id: &str) -> bool {
+    service_id == "telegram" || service_id.starts_with("telegram_")
+}
+
+/// Create Vorcaro's Studio as a local-asset WebView (frontend/vorcaro/index.html).
+/// No chat-service injection scripts, no UA override, no badge monitor.
+fn create_vorcaro_panel(
+    app: &AppHandle,
+    state: &State<'_, AppState>,
+    window: &tauri::Window,
+    label: &str,
+    session_dir: std::path::PathBuf,
+) -> Result<(), String> {
+    let builder = WebviewBuilder::new(
+        label,
+        WebviewUrl::App("vorcaro/index.html".into()),
+    )
+    .data_directory(session_dir);
+
+    match window.add_child(
+        builder,
+        LogicalPosition::new(0.0, 0.0),
+        LogicalSize::new(100.0, 100.0),
+    ) {
+        Ok(wv) => {
+            state.created_views.lock().unwrap().insert(label.to_string());
+            setup_webview_permissions(&wv);
+            Ok(())
+        }
+        Err(e) => {
+            if app.get_webview(label).is_some() {
+                state.created_views.lock().unwrap().insert(label.to_string());
+                Ok(())
+            } else {
+                Err(e.to_string())
+            }
+        }
+    }
 }

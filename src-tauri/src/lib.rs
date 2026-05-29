@@ -6,9 +6,12 @@
 pub mod commands;
 pub mod config;
 pub mod services;
+pub mod vorcaro;
 
 use commands::AppState;
 use tauri::{Emitter, Manager};
+use vorcaro::orchestrator::OrchestratorState;
+use vorcaro::VorcaroStore;
 
 /// Titlebar height (must match CSS `#titlebar { height }`)
 pub const TITLEBAR_H: i32 = 30;
@@ -19,6 +22,8 @@ pub const SIDEBAR_W: i32 = 64;
 pub fn run() {
     tauri::Builder::default()
         .manage(AppState::default())
+        .manage(VorcaroStore::default())
+        .manage(OrchestratorState::default())
         .invoke_handler(tauri::generate_handler![
             commands::get_config,
             commands::get_catalog,
@@ -39,6 +44,39 @@ pub fn run() {
             commands::clear_badge,
             commands::show_service_menu,
             commands::bb_log,
+            vorcaro::vorcaro_get_state,
+            vorcaro::vorcaro_save_contact,
+            vorcaro::vorcaro_delete_contact,
+            vorcaro::vorcaro_import_csv,
+            vorcaro::vorcaro_save_list,
+            vorcaro::vorcaro_delete_list,
+            vorcaro::vorcaro_apply_tag,
+            vorcaro::vorcaro_remove_tag,
+            vorcaro::vorcaro_rename_tag,
+            vorcaro::vorcaro_update_settings,
+            vorcaro::vorcaro_add_contact_to_list,
+            vorcaro::vorcaro_remove_contact_from_list,
+            vorcaro::vorcaro_scrape_chats,
+            vorcaro::vorcaro_scrape_result,
+            vorcaro::vorcaro_import_scraped,
+            vorcaro::vorcaro_preview_campaign,
+            vorcaro::vorcaro_start_campaign,
+            vorcaro::vorcaro_pause_campaign,
+            vorcaro::vorcaro_resume_campaign,
+            vorcaro::vorcaro_abort_campaign,
+            vorcaro::vorcaro_send_result,
+            vorcaro::vorcaro_stage_attachment,
+            vorcaro::vorcaro_get_cloud_config,
+            vorcaro::vorcaro_save_cloud_config,
+            vorcaro::vorcaro_verify_cloud_connection,
+            vorcaro::vorcaro_list_cloud_templates,
+            vorcaro::vorcaro_list_workspaces,
+            vorcaro::vorcaro_scrape_workspace,
+            vorcaro::vorcaro_list_wa_labels,
+            vorcaro::vorcaro_wa_labels_result,
+            vorcaro::vorcaro_debug_chat_pane,
+            vorcaro::vorcaro_debug_dom_result,
+            vorcaro::vorcaro_scrape_progress,
         ])
         .setup(|app| {
             // Handle context-menu click events emitted by show_service_menu
@@ -66,6 +104,10 @@ pub fn run() {
                     let _ = app.emit("service-removed", serde_json::json!({ "id": svc_id }));
                 }
             });
+            // Respawn orchestrators for campaigns that were Scheduled / Running
+            // when the app last quit. Idempotent; safe to call once at boot.
+            vorcaro::rehydrate_on_boot(app.handle().clone());
+
             #[cfg(target_os = "linux")]
             setup_gtk_layout(app)?;
 
