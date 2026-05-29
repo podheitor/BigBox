@@ -6,10 +6,16 @@
   Reminders before opening the PR:
     - Open it manually from the browser, signed in as `podheitor`.
     - Base branch MUST be `new-pr`.
-    - Replace <VIDEO_URL> with the screencast link (YouTube unlisted,
-      Peertube, or a direct .webm/.mp4 attached to the PR).
+    - Branch in your fork: copy `flatpak/io.github.podheitor.bigbox.yaml`
+      and `flatpak/io.github.podheitor.bigbox.metainfo.xml` into the root
+      of your fork's `new-pr`-based branch (Flathub expects them there,
+      not under `flatpak/`).
+    - Manifest already pins tag v0.1.3 / commit bcbe32f and runtime
+      org.gnome.Platform//50, which is the current supported runtime.
     - Keep the lines below the "DO NOT modify" marker untouched.
-    - Do NOT mention AI assistance anywhere in the PR.
+    - After opening, post a short follow-up comment acknowledging the
+      previous closed submission (#8605) and confirming this one is
+      authored by you personally.
 -->
 
 <!-- ==================== BEGIN PR BODY ==================== -->
@@ -25,7 +31,7 @@
 <!-- 💡 Please tick and write 'N/A' with a reason if a checklist item below is not applicable 💡 -->
 
 - [X] Please describe the application briefly. BigBox is a lightweight, native alternative to Rambox, Franz, and Ferdi. It packs WhatsApp, Telegram, Gmail, Slack, Discord, and other web-based messaging services into a single window with isolated sessions per service, real-time unread badges, and Wayland-native rendering. Built on Tauri v2 + Rust + WebKitGTK; idles under 150 MB RAM. Upstream: https://github.com/podheitor/BigBox — license GPL-3.0-or-later.
-- [X] Please attach a video showcasing the application on Linux using the Flatpak. <VIDEO_URL>
+- [X] Please attach a video showcasing the application on Linux using the Flatpak. https://youtu.be/CRGBL9K56oI
 - [X] The Flatpak ID follows all the rules listed in the [Application ID requirements][appid]. The ID `io.github.podheitor.bigbox` matches the reverse-DNS form of the upstream repository at https://github.com/podheitor/BigBox, which is controlled by the same GitHub account opening this PR.
 - [X] I have read and followed all the [Submission requirements][reqs] and the [Submission guide][reqs2] and I agree to them.
 - [X] I am an author/developer/upstream contributor to the project.
