@@ -37,6 +37,13 @@ jobs:
       - name: Build .deb + AppImage
         run: cargo tauri build --bundles deb,appimage
 
+      # Both Ubuntu jobs emit BigBox_<ver>_amd64.deb; tag the distro into the
+      # filename so the two debs don't collide when attached to the release.
+      - name: Tag distro into .deb filename
+        run: |
+          f=$(ls src-tauri/target/release/bundle/deb/*.deb)
+          mv "$f" "${f%_amd64.deb}_amd64_ubuntu22.04.deb"
+
       - name: Upload .deb (Ubuntu 22.04)
         uses: actions/upload-artifact@v4
         with:
@@ -74,6 +81,11 @@ jobs:
 
       - name: Build .deb
         run: cargo tauri build --bundles deb
+
+      - name: Tag distro into .deb filename
+        run: |
+          f=$(ls src-tauri/target/release/bundle/deb/*.deb)
+          mv "$f" "${f%_amd64.deb}_amd64_ubuntu24.04.deb"
 
       - name: Upload .deb (Ubuntu 24.04)
         uses: actions/upload-artifact@v4
