@@ -723,6 +723,11 @@ pub fn open_service(
     #[cfg(target_os = "windows")]
     if let Some(ww) = app.get_webview_window(&label) {
         let _ = ww.show();
+        // set_focus alone doesn't reliably reorder sibling owned windows, so the
+        // newly-selected service could stay behind the previous one. Briefly
+        // toggling topmost deterministically lifts it to the top of the stack.
+        let _ = ww.set_always_on_top(true);
+        let _ = ww.set_always_on_top(false);
         let _ = ww.set_focus();
     }
 
