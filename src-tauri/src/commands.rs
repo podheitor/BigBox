@@ -642,8 +642,12 @@ fn build_service_window_win(
     let parsed: tauri::Url = url.parse().map_err(|e| format!("{e}"))?;
     let session_dir = services::session_dir(service_id);
     std::fs::create_dir_all(&session_dir).ok();
-    let (x, y, cw, ch) = content_area(app);
+    let (_x, _y, cw, ch) = content_area(app);
     let badge = BADGE_MONITOR_SCRIPT.replace("__BADGE_LABEL__", label);
+    // Created visible but off-screen: with occlusion calculation disabled (see
+    // run()), a visible off-screen window keeps rendering, so the controller
+    // initializes at boot and the service is ready to paint the instant it's
+    // moved onto the content area. (A hidden window wouldn't render at all.)
     let wb = tauri::WebviewWindowBuilder::new(app, label.to_string(), WebviewUrl::External(parsed))
         .data_directory(session_dir)
         .initialization_script(badge)
@@ -651,9 +655,8 @@ fn build_service_window_win(
         .decorations(false)
         .skip_taskbar(true)
         .shadow(false)
-        .visible(false)
         .inner_size(cw, ch)
-        .position(x, y);
+        .position(-32000.0, -32000.0);
     // Own it to the main window (stays above it, closes with it). parent()
     // consumes the builder, so handle the error path explicitly.
     let mut wb = match app.get_webview_window("main") {
@@ -930,14 +933,8 @@ pub fn place_service_windows(app: &AppHandle) {
         if let Some(ww) = app.get_webview_window(&lbl) {
             let _ = ww.set_size(sz);
             if active.as_deref() == Some(lbl.as_str()) {
-                // Bring the active service onto the content area and show it.
                 let _ = ww.set_position(content);
-                let _ = ww.show();
-            } else if ww.is_visible().unwrap_or(false) {
-                // A previously-shown service: park it off-screen (keeps it
-                // rendered). We must NOT move a still-hidden service: a window
-                // moved while hidden never paints when first shown — leaving it
-                // at its boot (content) position lets its first show render it.
+            } else {
                 let _ = ww.set_position(offscreen);
             }
         }

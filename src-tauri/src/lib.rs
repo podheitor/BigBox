@@ -20,6 +20,16 @@ pub const SIDEBAR_W: i32 = 64;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Windows: keep every service webview painting even while it's hidden or
+    // off-screen. WebView2 otherwise suspends rendering for occluded windows,
+    // so a service that wasn't on-screen when first shown comes up blank.
+    // Must be set before any WebView2 instance is created.
+    #[cfg(target_os = "windows")]
+    std::env::set_var(
+        "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
+        "--disable-features=CalculateNativeWinOcclusion",
+    );
+
     tauri::Builder::default()
         .manage(AppState::default())
         .manage(VorcaroStore::default())
