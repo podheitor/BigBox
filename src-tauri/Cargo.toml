@@ -38,10 +38,3 @@ panic      = "abort"
 gtk   = { version = "0.18", features = ["v3_24"] }
 cairo = { version = "0.18", package = "cairo-rs" }
 webkit2gtk = "2.0"
-
-# Direct WebView2 controller access — needed to size a multiwebview child's
-# ICoreWebView2Controller (Wry's set_bounds doesn't reach it). Versions match
-# what tauri/wry already resolve so the COM types unify.
-[target.'cfg(windows)'.dependencies]
-webview2-com = "0.38"
-windows = { version = "0.61", features = ["Win32_Foundation"] }

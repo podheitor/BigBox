@@ -114,8 +114,6 @@ dependencies = [
  "toml 0.8.2",
  "uuid",
  "webkit2gtk",
- "webview2-com",
- "windows",
 ]
 
 [[package]]
