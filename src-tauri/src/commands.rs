@@ -660,10 +660,18 @@ pub fn open_service(
     #[cfg(target_os = "linux")]
     crate::collapse_shell_impl(&app);
 
-    // Hide all visible service WebViews
+    // Hide the other service views (Linux: in-window webviews; Windows: the
+    // per-service windows), then create-if-needed and reveal the active one.
     {
         let created = state.created_views.lock().unwrap();
         for lbl in created.iter() {
+            #[cfg(target_os = "windows")]
+            if lbl.as_str() != label.as_str() {
+                if let Some(w) = app.get_webview_window(lbl) {
+                    let _ = w.hide();
+                }
+            }
+            #[cfg(not(target_os = "windows"))]
             if let Some(wv) = app.get_webview(lbl) {
                 let _ = wv.hide();
             }
@@ -679,16 +687,18 @@ pub fn open_service(
         user_agent.as_deref(),
     )?;
 
+    // Linux/other: show the in-window webview and bound it to the content area.
+    #[cfg(not(target_os = "windows"))]
     if let Some(wv) = app.get_webview(&label) {
         wv.show().map_err(|e| e.to_string())?;
         apply_svc_bounds(&app, &wv);
     }
 
-    // Windows: each service is its own borderless window. Show + reposition the
-    // active one (handles re-opens where the window was hidden on switch-away).
+    // Windows: reveal + raise the pre-created service window.
     #[cfg(target_os = "windows")]
     if let Some(ww) = app.get_webview_window(&label) {
-        position_service_window(&app, &ww);
+        let _ = ww.show();
+        let _ = ww.set_focus();
     }
 
     *state.active_view.lock().unwrap() = Some(label);
@@ -845,6 +855,66 @@ fn setup_webview_permissions(wv: &tauri::Webview) {
 
 #[cfg(not(target_os = "linux"))]
 fn setup_webview_permissions(_wv: &tauri::Webview) {}
+
+/// Windows: pre-create every configured service as a hidden, borderless,
+/// content-area-sized WebviewWindow at boot. WebView2 controllers only
+/// initialize and paint when their webview is created on the UI thread at
+/// startup; a webview created later from a command leaves the controller 0x0
+/// (gray/black). open_service then just shows/raises the matching window.
+#[cfg(target_os = "windows")]
+pub fn precreate_service_windows(app: &AppHandle) {
+    let cfg = config::load();
+    let catalog = services::load_catalog();
+    let Some(window) = app.get_window("main") else { return };
+    let scale = window.scale_factor().unwrap_or(1.0);
+    let phys  = window.inner_size().unwrap_or_default();
+    let lw = phys.width  as f64 / scale;
+    let lh = phys.height as f64 / scale;
+    let x  = crate::SIDEBAR_W as f64;
+    let y  = crate::TITLEBAR_H as f64;
+    let cw = (lw - x).max(1.0);
+    let ch = (lh - y).max(1.0);
+    let main_ww = app.get_webview_window("main");
+    let state: State<'_, AppState> = app.state();
+    for us in cfg.services.iter().filter(|s| s.enabled) {
+        // Vorcaro's local panel is created separately; skip it here.
+        if is_vorcaro_panel(&us.id) { continue; }
+        let Some(def) = catalog.iter().find(|d| d.id == us.service_type) else { continue };
+        let label = svc_label(&us.id);
+        if app.get_webview_window(&label).is_some() { continue; }
+        let Ok(parsed) = def.url.parse::<tauri::Url>() else { continue };
+        let session_dir = services::session_dir(&us.id);
+        std::fs::create_dir_all(&session_dir).ok();
+        let badge = BADGE_MONITOR_SCRIPT.replace("__BADGE_LABEL__", &label);
+        let wb = tauri::WebviewWindowBuilder::new(app, label.clone(), WebviewUrl::External(parsed))
+            .data_directory(session_dir)
+            .initialization_script(badge)
+            .initialization_script(ZOOM_SHORTCUT_SCRIPT)
+            .decorations(false)
+            .skip_taskbar(true)
+            .shadow(false)
+            .visible(false)
+            .inner_size(cw, ch)
+            .position(x, y);
+        // Own the service window to the main window (stays above it, closes with
+        // it). parent() consumes the builder, so skip the service on error.
+        let mut wb = match &main_ww {
+            Some(mw) => match wb.parent(mw) { Ok(b) => b, Err(_) => continue },
+            None => wb,
+        };
+        if is_whatsapp_service(&us.id) {
+            wb = wb.initialization_script(crate::vorcaro::drivers::VORCARO_WHATSAPP_DRIVER);
+        } else if is_telegram_service(&us.id) {
+            wb = wb.initialization_script(crate::vorcaro::drivers::VORCARO_TELEGRAM_DRIVER);
+        }
+        if let Some(ua) = &def.user_agent {
+            wb = wb.user_agent(ua);
+        }
+        if wb.build().is_ok() {
+            state.created_views.lock().unwrap().insert(label);
+        }
+    }
+}
 
 fn ensure_service_webview_created(
     app: &AppHandle,

@@ -130,26 +130,13 @@ pub fn run() {
                 });
             }
 
-            // BOOT-CREATION TEST (Windows): create a service-style WebviewWindow
-            // here in setup() — the same way the shell (which renders fine) is
-            // created — to check whether boot-created runtime webviews paint,
-            // unlike the gray ones created later from a command.
+            // Windows: WebView2 controllers only initialize/paint when their
+            // webview is created at boot on the UI thread (runtime creation from
+            // a command leaves the controller 0x0 / gray). So pre-create every
+            // configured service window here, hidden; open_service then just
+            // shows/raises the right one.
             #[cfg(target_os = "windows")]
-            {
-                if let Ok(url) = "https://web.whatsapp.com".parse::<tauri::Url>() {
-                    let r = tauri::WebviewWindowBuilder::new(
-                        app.handle(),
-                        "svc-boot-test",
-                        tauri::WebviewUrl::External(url),
-                    )
-                    .title("BOOT TEST WA")
-                    .inner_size(900.0, 680.0)
-                    .position(40.0, 40.0)
-                    .data_directory(crate::services::session_dir("boottest"))
-                    .build();
-                    eprintln!("[boot-test] window created: {}", r.is_ok());
-                }
-            }
+            commands::precreate_service_windows(app.handle());
 
             Ok(())
         })
