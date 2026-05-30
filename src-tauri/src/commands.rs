@@ -718,16 +718,29 @@ pub fn open_service(
         apply_svc_bounds(&app, &wv);
     }
 
+    #[cfg(target_os = "windows")]
+    let prev_active = state.active_view.lock().unwrap().clone();
+
     *state.active_view.lock().unwrap() = Some(label.clone());
 
-    // Windows: show the selected service window and raise it. show()/set_focus()
-    // are the only window ops that take effect from a command handler. We don't
-    // hide the others (hiding hides the inner webview, which won't re-show at
-    // runtime); the focused window comes to the front.
+    // Windows: hide the previously-active service window (it has already
+    // rendered, so it re-shows fine later) and show()+set_focus() the selected
+    // one. show()/hide() are the only window ops that take effect from a command
+    // handler, and hiding the previous window is what reliably reveals the new
+    // one (set_focus alone doesn't reorder sibling owned windows).
     #[cfg(target_os = "windows")]
-    if let Some(ww) = app.get_webview_window(&label) {
-        let _ = ww.show();
-        let _ = ww.set_focus();
+    {
+        if let Some(prev) = prev_active {
+            if prev != label {
+                if let Some(pw) = app.get_webview_window(&prev) {
+                    let _ = pw.hide();
+                }
+            }
+        }
+        if let Some(ww) = app.get_webview_window(&label) {
+            let _ = ww.show();
+            let _ = ww.set_focus();
+        }
     }
 
     Ok(())
