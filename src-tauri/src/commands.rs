@@ -613,22 +613,36 @@ pub fn apply_svc_bounds(app: &AppHandle, wv: &tauri::Webview<tauri::Wry>) {
 /// resizes.
 #[cfg(target_os = "windows")]
 pub fn position_service_window(app: &AppHandle, ww: &tauri::WebviewWindow) {
-    use crate::{SIDEBAR_W, TITLEBAR_H};
-    // No early returns: always end by showing the window. (inner_position()
-    // can error on a not-yet-shown window, which previously bailed before
-    // sizing/showing and left the service window 800x600 and hidden.)
-    if let Some(main) = app.get_webview_window("main") {
-        let scale  = main.scale_factor().unwrap_or(1.0);
-        let origin = main.outer_position().unwrap_or_default();
-        let size   = main.inner_size().unwrap_or_default();
-        let off_x = (SIDEBAR_W as f64 * scale).round() as i32;
-        let off_y = (TITLEBAR_H as f64 * scale).round() as i32;
-        let w = (size.width  as i32 - off_x).max(1) as u32;
-        let h = (size.height as i32 - off_y).max(1) as u32;
-        let _ = ww.set_position(tauri::PhysicalPosition::new(origin.x + off_x, origin.y + off_y));
-        let _ = ww.set_size(tauri::PhysicalSize::new(w, h));
-    }
-    let _ = ww.show();
+    // Window ops (show/set_position/set_size) must run on the UI/main thread;
+    // Tauri command handlers run off it, so dispatch there. No early returns —
+    // always end by showing the window.
+    let app = app.clone();
+    let ww = ww.clone();
+    let _ = app.clone().run_on_main_thread(move || {
+        use crate::{SIDEBAR_W, TITLEBAR_H};
+        use std::io::Write;
+        let mut dbg = String::from("[pos] main-thread");
+        if let Some(main) = app.get_webview_window("main") {
+            let scale  = main.scale_factor().unwrap_or(1.0);
+            let origin = main.outer_position().unwrap_or_default();
+            let size   = main.inner_size().unwrap_or_default();
+            let off_x = (SIDEBAR_W as f64 * scale).round() as i32;
+            let off_y = (TITLEBAR_H as f64 * scale).round() as i32;
+            let w = (size.width  as i32 - off_x).max(1) as u32;
+            let h = (size.height as i32 - off_y).max(1) as u32;
+            let rp = ww.set_position(tauri::PhysicalPosition::new(origin.x + off_x, origin.y + off_y));
+            let rs = ww.set_size(tauri::PhysicalSize::new(w, h));
+            dbg.push_str(&format!(" origin=({},{}) main={}x{} -> {}x{} setpos_ok={} setsize_ok={}",
+                origin.x, origin.y, size.width, size.height, w, h, rp.is_ok(), rs.is_ok()));
+        } else {
+            dbg.push_str(" NO_MAIN");
+        }
+        let rsh = ww.show();
+        dbg.push_str(&format!(" show_ok={}\n", rsh.is_ok()));
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("C:\\bb_pos.log") {
+            let _ = f.write_all(dbg.as_bytes());
+        }
+    });
 }
 
 #[tauri::command]
