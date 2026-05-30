@@ -38,9 +38,3 @@ panic      = "abort"
 gtk   = { version = "0.18", features = ["v3_24"] }
 cairo = { version = "0.18", package = "cairo-rs" }
 webkit2gtk = "2.0"
-
-# SetWindowPos to move service windows on/off the content area from a command
-# handler (Tauri's set_position only applies on the event-loop thread). Version
-# matches what tauri/wry resolve so the HWND from ww.hwnd() unifies.
-[target.'cfg(windows)'.dependencies]
-windows = { version = "0.61", features = ["Win32_UI_WindowsAndMessaging", "Win32_Foundation"] }

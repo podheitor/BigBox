@@ -920,36 +920,49 @@ pub fn precreate_service_windows(app: &AppHandle) {
 /// inner webview) and z-order juggling (unreliable for sibling owned windows).
 #[cfg(target_os = "windows")]
 pub fn place_service_windows(app: &AppHandle) {
-    use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOACTIVATE, SWP_NOZORDER};
+    // Pick the visible service by show()/hide() — these are the only window ops
+    // that take effect from a command handler (positioning only applies on the
+    // event-loop thread). All service windows sit at the content area; showing
+    // the active one and hiding the rest selects what's on screen. With
+    // occlusion disabled and each window already painted at boot, a hidden
+    // service repaints instantly when shown again.
+    let state: State<'_, AppState> = app.state();
+    let active = state.active_view.lock().unwrap().clone();
+    let labels: Vec<String> = state.created_views.lock().unwrap().iter().cloned().collect();
+    for lbl in labels {
+        if let Some(ww) = app.get_webview_window(&lbl) {
+            if active.as_deref() == Some(lbl.as_str()) {
+                let _ = ww.show();
+            } else {
+                let _ = ww.hide();
+            }
+        }
+    }
+}
+
+/// Windows: size/position every service window onto the main window's content
+/// area. Only effective on the event-loop thread, so it's called from the
+/// Moved/Resized handler (set_position/set_size apply there) to keep the
+/// borderless service windows pinned to the content area as the main window
+/// moves and resizes. Visibility is handled separately by place_service_windows.
+#[cfg(target_os = "windows")]
+pub fn reposition_service_windows(app: &AppHandle) {
     let Some(main) = app.get_webview_window("main") else { return };
     let scale  = main.scale_factor().unwrap_or(1.0);
     let origin = main.outer_position().unwrap_or_default();
     let size   = main.inner_size().unwrap_or_default();
     let off_x = (crate::SIDEBAR_W as f64 * scale).round() as i32;
     let off_y = (crate::TITLEBAR_H as f64 * scale).round() as i32;
-    let w = (size.width  as i32 - off_x).max(1);
-    let h = (size.height as i32 - off_y).max(1);
-    let cx = origin.x + off_x;
-    let cy = origin.y + off_y;
+    let w = (size.width  as i32 - off_x).max(1) as u32;
+    let h = (size.height as i32 - off_y).max(1) as u32;
+    let pos = tauri::PhysicalPosition::new(origin.x + off_x, origin.y + off_y);
+    let sz  = tauri::PhysicalSize::new(w, h);
     let state: State<'_, AppState> = app.state();
-    let active = state.active_view.lock().unwrap().clone();
     let labels: Vec<String> = state.created_views.lock().unwrap().iter().cloned().collect();
-    // Move/size each window with SetWindowPos: it's a synchronous cross-thread
-    // Win32 call, so it works from a command handler too (Tauri's set_position
-    // dispatches to the event loop and is a no-op off it). Active → content
-    // area, the rest → off-screen; z-order is left alone (only one is on-screen).
     for lbl in labels {
         if let Some(ww) = app.get_webview_window(&lbl) {
-            if let Ok(hwnd) = ww.hwnd() {
-                let (x, y) = if active.as_deref() == Some(lbl.as_str()) {
-                    (cx, cy)
-                } else {
-                    (-32000, -32000)
-                };
-                unsafe {
-                    let _ = SetWindowPos(hwnd, None, x, y, w, h, SWP_NOZORDER | SWP_NOACTIVATE);
-                }
-            }
+            let _ = ww.set_position(pos);
+            let _ = ww.set_size(sz);
         }
     }
 }

@@ -138,7 +138,7 @@ pub fn run() {
                         return;
                     }
                     #[cfg(target_os = "windows")]
-                    commands::place_service_windows(&app_h);
+                    commands::reposition_service_windows(&app_h);
                     #[cfg(not(target_os = "windows"))]
                     if let tauri::WindowEvent::Resized(_) = event {
                         let state: tauri::State<'_, commands::AppState> = app_h.state();
