@@ -639,7 +639,8 @@ pub fn position_service_window(app: &AppHandle, ww: &tauri::WebviewWindow) {
         }
         let rsh = ww.show();
         dbg.push_str(&format!(" show_ok={}\n", rsh.is_ok()));
-        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("C:\\bb_pos.log") {
+        let log_path = std::env::temp_dir().join("bb_pos.log");
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(log_path) {
             let _ = f.write_all(dbg.as_bytes());
         }
     });
@@ -886,6 +887,15 @@ fn ensure_service_webview_created(
     {
         use tauri::WebviewWindowBuilder;
         let main_ww = app.get_webview_window("main").ok_or("main window missing")?;
+        // Set geometry + visibility on the BUILDER so they apply at creation —
+        // post-creation set_position/set_size/show on a child window proved
+        // unreliable (window stayed 800x600 and hidden).
+        let scale = window.scale_factor().unwrap_or(1.0);
+        let phys  = window.inner_size().unwrap_or_default();
+        let lw = phys.width  as f64 / scale;
+        let lh = phys.height as f64 / scale;
+        let x  = crate::SIDEBAR_W as f64;
+        let y  = crate::TITLEBAR_H as f64;
         let mut wb = WebviewWindowBuilder::new(app, label, WebviewUrl::External(parsed_url))
             .data_directory(session_dir)
             .initialization_script(badge_script.clone())
@@ -893,7 +903,8 @@ fn ensure_service_webview_created(
             .decorations(false)
             .skip_taskbar(true)
             .shadow(false)
-            .visible(false);
+            .inner_size((lw - x).max(1.0), (lh - y).max(1.0))
+            .position(x, y);
         wb = wb.parent(&main_ww).map_err(|e| e.to_string())?;
         if is_whatsapp_service(service_id) {
             wb = wb.initialization_script(crate::vorcaro::drivers::VORCARO_WHATSAPP_DRIVER);
