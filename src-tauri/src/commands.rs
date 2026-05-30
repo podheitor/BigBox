@@ -828,11 +828,24 @@ fn ensure_service_webview_created(
     let mut builder = WebviewBuilder::new(label, WebviewUrl::External(parsed_url))
         .data_directory(session_dir)
         .initialization_script(&badge_script)
-        .initialization_script(NOTIFICATION_GRANT_SCRIPT)
-        .initialization_script(CLIPBOARD_IMAGE_SHIM)
-        .initialization_script(CODEC_FILTER_SCRIPT)
-        .initialization_script(BLOB_VIDEO_PATCH)
         .initialization_script(ZOOM_SHORTCUT_SCRIPT);
+
+    // WebKitGTK-only shims. NOTIFICATION_GRANT, CLIPBOARD_IMAGE_SHIM,
+    // CODEC_FILTER and BLOB_VIDEO_PATCH all exist solely to work around
+    // WebKitGTK 4.1 bugs (notification-permission persistence, GTK clipboard
+    // image paste, HE-AAC decode, blob:<video> audio drop). On the Windows
+    // WebView2 (Chromium) backend they are dead weight, and BLOB_VIDEO_PATCH in
+    // particular monkey-patches URL.createObjectURL and the HTMLMediaElement
+    // `src` setter process-wide — exactly the kind of global hook that left
+    // WhatsApp Web stuck on a black splash there. Linux-only.
+    #[cfg(target_os = "linux")]
+    {
+        builder = builder
+            .initialization_script(NOTIFICATION_GRANT_SCRIPT)
+            .initialization_script(CLIPBOARD_IMAGE_SHIM)
+            .initialization_script(CODEC_FILTER_SCRIPT)
+            .initialization_script(BLOB_VIDEO_PATCH);
+    }
 
     // Vorcaro driver — scrape-only in Phase B. Only injected into the chat
     // services we can actually drive; everywhere else it's pure overhead.
@@ -853,9 +866,19 @@ fn ensure_service_webview_created(
             .initialization_script(CODEC_PROBE_SCRIPT);
     }
 
+    // The per-service user_agent_override values exist to make WebKitGTK (whose
+    // default UA is a bare "...AppleWebKit...") present as a desktop Chrome that
+    // services like WhatsApp/Slack/Discord accept. WebView2 already advertises a
+    // current Chromium/Edge UA, and forcing a Linux-Chrome UA string there
+    // desyncs it from the User-Agent Client Hints WebView2 keeps sending —
+    // WhatsApp Web reads both and the mismatch parks it on a black screen.
+    // Let WebView2 use its native, self-consistent identity. Linux-only.
+    #[cfg(target_os = "linux")]
     if let Some(ua) = user_agent {
         builder = builder.user_agent(ua);
     }
+    #[cfg(not(target_os = "linux"))]
+    let _ = user_agent;
 
     // Initial pos/size — corrected by apply_svc_bounds after creation
     match window.add_child(
