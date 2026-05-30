@@ -903,6 +903,32 @@ pub fn precreate_service_windows(app: &AppHandle) {
     }
 }
 
+/// Windows: re-place every service window over the main window's content area
+/// (screen coords). Called from the main window's Moved/Resized handler — which
+/// runs on the UI thread, so set_position/set_size apply — so the borderless
+/// service windows track the main window as it moves and resizes.
+#[cfg(target_os = "windows")]
+pub fn reposition_service_windows(app: &AppHandle) {
+    let Some(main) = app.get_webview_window("main") else { return };
+    let scale  = main.scale_factor().unwrap_or(1.0);
+    let origin = main.outer_position().unwrap_or_default();
+    let size   = main.inner_size().unwrap_or_default();
+    let off_x = (crate::SIDEBAR_W as f64 * scale).round() as i32;
+    let off_y = (crate::TITLEBAR_H as f64 * scale).round() as i32;
+    let w = (size.width  as i32 - off_x).max(1) as u32;
+    let h = (size.height as i32 - off_y).max(1) as u32;
+    let pos = tauri::PhysicalPosition::new(origin.x + off_x, origin.y + off_y);
+    let sz  = tauri::PhysicalSize::new(w, h);
+    let state: State<'_, AppState> = app.state();
+    let labels: Vec<String> = state.created_views.lock().unwrap().iter().cloned().collect();
+    for lbl in labels {
+        if let Some(ww) = app.get_webview_window(&lbl) {
+            let _ = ww.set_position(pos);
+            let _ = ww.set_size(sz);
+        }
+    }
+}
+
 fn ensure_service_webview_created(
     app: &AppHandle,
     state: &State<'_, AppState>,

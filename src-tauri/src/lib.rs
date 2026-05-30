@@ -111,13 +111,25 @@ pub fn run() {
             #[cfg(target_os = "linux")]
             setup_gtk_layout(app)?;
 
-            // Reposition all service WebViews when window is resized.
-            // Cross-platform: child-webview bounds must track the window on
-            // Windows too, otherwise services never fill the content area.
+            // Keep service views aligned to the content area as the main window
+            // moves/resizes. Linux: re-bound the in-window child webviews on
+            // resize. Windows: re-place the borderless per-service windows on
+            // both move and resize (this handler runs on the UI thread, so the
+            // window ops apply).
             {
                 let window = app.get_window("main").ok_or("main window missing")?;
                 let app_h = app.handle().clone();
                 window.on_window_event(move |event| {
+                    let track = matches!(
+                        event,
+                        tauri::WindowEvent::Resized(_) | tauri::WindowEvent::Moved(_)
+                    );
+                    if !track {
+                        return;
+                    }
+                    #[cfg(target_os = "windows")]
+                    commands::reposition_service_windows(&app_h);
+                    #[cfg(not(target_os = "windows"))]
                     if let tauri::WindowEvent::Resized(_) = event {
                         let state: tauri::State<'_, commands::AppState> = app_h.state();
                         let views: Vec<String> = state.created_views.lock().unwrap().iter().cloned().collect();
