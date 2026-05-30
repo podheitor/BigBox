@@ -581,7 +581,10 @@ const ZOOM_SHORTCUT_SCRIPT: &str = r#"
 #[tauri::command]
 /// Apply correct position+size to a service WebView on Linux.
 /// Service views must be offset by sidebar+titlebar to not block shell input.
-#[cfg(target_os = "linux")]
+/// Cross-platform: `set_bounds` / `inner_size` / `scale_factor` all work on
+/// WebView2 too. Without this the child webview keeps its 100x100 creation size
+/// in the top-left corner — on Windows that left every service as a blank dark
+/// pane (the webview hidden behind the sidebar), which read as a "black screen".
 pub fn apply_svc_bounds(app: &AppHandle, wv: &tauri::Webview<tauri::Wry>) {
     use crate::{SIDEBAR_W, TITLEBAR_H};
     let Some(win) = app.get_window("main") else { return };
@@ -635,7 +638,6 @@ pub fn open_service(
 
     if let Some(wv) = app.get_webview(&label) {
         wv.show().map_err(|e| e.to_string())?;
-        #[cfg(target_os = "linux")]
         apply_svc_bounds(&app, &wv);
     }
 
@@ -665,7 +667,6 @@ pub fn preload_service(
 
     if let Some(wv) = app.get_webview(&label) {
         let _ = wv.hide();
-        #[cfg(target_os = "linux")]
         apply_svc_bounds(&app, &wv);
     }
 

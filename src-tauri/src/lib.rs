@@ -111,8 +111,9 @@ pub fn run() {
             #[cfg(target_os = "linux")]
             setup_gtk_layout(app)?;
 
-            // Reposition all service WebViews when window is resized
-            #[cfg(target_os = "linux")]
+            // Reposition all service WebViews when window is resized.
+            // Cross-platform: child-webview bounds must track the window on
+            // Windows too, otherwise services never fill the content area.
             {
                 let window = app.get_window("main").ok_or("main window missing")?;
                 let app_h = app.handle().clone();
