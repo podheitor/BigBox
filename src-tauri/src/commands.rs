@@ -881,12 +881,25 @@ fn ensure_service_webview_created(
     #[cfg(not(target_os = "linux"))]
     let _ = user_agent;
 
-    // Initial pos/size — corrected by apply_svc_bounds after creation
-    match window.add_child(
-        builder,
-        LogicalPosition::new(0.0, 0.0),
-        LogicalSize::new(100.0, 100.0),
-    ) {
+    // Create the child webview already sized to fill the content area. On
+    // WebView2 (Windows) the controller honors the bounds it is *created* with,
+    // but ignores a later set_bounds() on a multiwebview child — so a
+    // create-at-100x100-then-resize approach left every service stuck as a
+    // 100x100 pane in the corner (the "black screen"). apply_svc_bounds still
+    // runs afterwards to track later window resizes (and for GTK on Linux).
+    let (init_pos, init_size) = {
+        let scale = window.scale_factor().unwrap_or(1.0);
+        let phys  = window.inner_size().unwrap_or_default();
+        let lw = phys.width  as f64 / scale;
+        let lh = phys.height as f64 / scale;
+        let x  = crate::SIDEBAR_W as f64;
+        let y  = crate::TITLEBAR_H as f64;
+        (
+            LogicalPosition::new(x, y),
+            LogicalSize::new((lw - x).max(1.0), (lh - y).max(1.0)),
+        )
+    };
+    match window.add_child(builder, init_pos, init_size) {
         Ok(wv) => {
             state.created_views.lock().unwrap().insert(label.to_string());
               setup_webview_permissions(&wv);
