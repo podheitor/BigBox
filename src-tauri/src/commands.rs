@@ -720,17 +720,14 @@ pub fn open_service(
 
     *state.active_view.lock().unwrap() = Some(label.clone());
 
-    // Windows: only the active service window sits on the content area; the rest
-    // are parked off-screen. We avoid hiding (which hides the inner webview, and
-    // re-showing it at runtime is a no-op) and any z-order juggling (set_focus /
-    // topmost proved unreliable for sibling owned windows) — with a single
-    // window on-screen there's nothing to fight over.
+    // Windows: show the selected service window and raise it. show()/set_focus()
+    // are the only window ops that take effect from a command handler. We don't
+    // hide the others (hiding hides the inner webview, which won't re-show at
+    // runtime); the focused window comes to the front.
     #[cfg(target_os = "windows")]
-    {
-        place_service_windows(&app);
-        if let Some(ww) = app.get_webview_window(&label) {
-            let _ = ww.set_focus();
-        }
+    if let Some(ww) = app.get_webview_window(&label) {
+        let _ = ww.show();
+        let _ = ww.set_focus();
     }
 
     Ok(())
@@ -908,34 +905,6 @@ pub fn precreate_service_windows(app: &AppHandle) {
     }
     // No boot park needed: every window is created hidden, so the shell's
     // welcome screen shows until the user opens a service.
-}
-
-/// Windows: place service windows so only the active one is on the content area
-/// (sized to it, over the main window) and the rest are parked off-screen.
-/// Called by open_service on switch and by the main window's Moved/Resized
-/// handler so the active window tracks the main window. Selecting which window
-/// is visible by on-screen/off-screen position avoids hiding (which kills the
-/// inner webview) and z-order juggling (unreliable for sibling owned windows).
-#[cfg(target_os = "windows")]
-pub fn place_service_windows(app: &AppHandle) {
-    // Pick the visible service by show()/hide() — these are the only window ops
-    // that take effect from a command handler (positioning only applies on the
-    // event-loop thread). All service windows sit at the content area; showing
-    // the active one and hiding the rest selects what's on screen. With
-    // occlusion disabled and each window already painted at boot, a hidden
-    // service repaints instantly when shown again.
-    let state: State<'_, AppState> = app.state();
-    let active = state.active_view.lock().unwrap().clone();
-    let labels: Vec<String> = state.created_views.lock().unwrap().iter().cloned().collect();
-    for lbl in labels {
-        if let Some(ww) = app.get_webview_window(&lbl) {
-            if active.as_deref() == Some(lbl.as_str()) {
-                let _ = ww.show();
-            } else {
-                let _ = ww.hide();
-            }
-        }
-    }
 }
 
 /// Windows: size/position every service window onto the main window's content
