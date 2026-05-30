@@ -686,18 +686,12 @@ pub fn open_service(
     #[cfg(target_os = "linux")]
     crate::collapse_shell_impl(&app);
 
-    // Hide the other service views (Linux: in-window webviews; Windows: the
-    // per-service windows), then create-if-needed and reveal the active one.
+    // Linux/other: hide the other in-window service webviews. (Windows raises
+    // the active window instead — see below.)
+    #[cfg(not(target_os = "windows"))]
     {
         let created = state.created_views.lock().unwrap();
         for lbl in created.iter() {
-            #[cfg(target_os = "windows")]
-            if lbl.as_str() != label.as_str() {
-                if let Some(w) = app.get_webview_window(lbl) {
-                    let _ = w.hide();
-                }
-            }
-            #[cfg(not(target_os = "windows"))]
             if let Some(wv) = app.get_webview(lbl) {
                 let _ = wv.hide();
             }
@@ -720,18 +714,16 @@ pub fn open_service(
         apply_svc_bounds(&app, &wv);
     }
 
-    // Windows: reveal + raise the pre-created service window. Show the webview
-    // too: hiding the window on switch-away also hides its inner webview, and
-    // window show() alone doesn't bring it back (the pane would stay blank).
+    // Windows: reveal + raise the active service window above its siblings. We
+    // deliberately do NOT hide the other service windows: hiding a window also
+    // hides its inner webview, and re-showing the webview at runtime doesn't
+    // take effect (it stays blank). Since every service window is the same size
+    // and pinned to the content area, raising the active one fully covers the
+    // rest, and each renders the first time it is shown.
     #[cfg(target_os = "windows")]
-    {
-        if let Some(wv) = app.get_webview(&label) {
-            let _ = wv.show();
-        }
-        if let Some(ww) = app.get_webview_window(&label) {
-            let _ = ww.show();
-            let _ = ww.set_focus();
-        }
+    if let Some(ww) = app.get_webview_window(&label) {
+        let _ = ww.show();
+        let _ = ww.set_focus();
     }
 
     *state.active_view.lock().unwrap() = Some(label);
