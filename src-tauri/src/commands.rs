@@ -930,9 +930,14 @@ pub fn place_service_windows(app: &AppHandle) {
         if let Some(ww) = app.get_webview_window(&lbl) {
             let _ = ww.set_size(sz);
             if active.as_deref() == Some(lbl.as_str()) {
+                // Bring the active service onto the content area and show it.
                 let _ = ww.set_position(content);
                 let _ = ww.show();
-            } else {
+            } else if ww.is_visible().unwrap_or(false) {
+                // A previously-shown service: park it off-screen (keeps it
+                // rendered). We must NOT move a still-hidden service: a window
+                // moved while hidden never paints when first shown — leaving it
+                // at its boot (content) position lets its first show render it.
                 let _ = ww.set_position(offscreen);
             }
         }
