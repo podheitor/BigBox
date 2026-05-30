@@ -580,54 +580,51 @@ const ZOOM_SHORTCUT_SCRIPT: &str = r#"
 /// MUST be sync (not async) — GTK calls require the main thread.
 #[tauri::command]
 /// Apply correct position+size to a service WebView on Linux.
-/// Service views must be offset by sidebar+titlebar to not block shell input.
-/// Cross-platform: `set_bounds` / `inner_size` / `scale_factor` all work on
-/// WebView2 too. Without this the child webview keeps its 100x100 creation size
-/// in the top-left corner — on Windows that left every service as a blank dark
-/// pane (the webview hidden behind the sidebar), which read as a "black screen".
+/// Position the overlaid service webview over the content area (right of the
+/// sidebar, below the titlebar) so it doesn't block shell input. Linux/other
+/// only: on Windows each service is its own borderless WebviewWindow placed at
+/// the window level (see `position_service_window`), so this is a no-op there.
 pub fn apply_svc_bounds(app: &AppHandle, wv: &tauri::Webview<tauri::Wry>) {
-    use crate::{SIDEBAR_W, TITLEBAR_H};
-    let Some(win) = app.get_window("main") else { return };
-    let scale = win.scale_factor().unwrap_or(1.0);
-    let phys  = win.inner_size().unwrap_or_default();
-    let lw = phys.width  as f64 / scale;
-    let lh = phys.height as f64 / scale;
-    let x  = SIDEBAR_W as f64;
-    let y  = TITLEBAR_H as f64;
-    let cw = (lw - x).max(1.0);
-    let ch = (lh - y).max(1.0);
-    let _  = wv.set_bounds(tauri::Rect {
-        position: tauri::Position::Logical(tauri::LogicalPosition::new(x, y)),
-        size:     tauri::Size::Logical(tauri::LogicalSize::new(cw, ch)),
-    });
-
-    // On WebView2 the child webview's host HWND is sized at creation (see
-    // add_child below), but its ICoreWebView2Controller is created
-    // asynchronously *after* the host's initial WM_SIZE, so it never receives a
-    // size and stays 0x0 — the host is the right size but paints nothing
-    // (black). Wry's set_bounds() above doesn't reach a multiwebview child's
-    // controller either. Drive the controller's bounds directly: bounds are
-    // relative to its host window, so origin is (0,0) and size is the content
-    // area in physical pixels.
-    #[cfg(target_os = "windows")]
+    #[cfg(not(target_os = "windows"))]
     {
-        let cw_phys = (cw * scale).round() as i32;
-        let ch_phys = (ch * scale).round() as i32;
-        let _ = wv.with_webview(move |pw| {
-            use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Controller;
-            use windows::Win32::Foundation::RECT;
-            let controller: ICoreWebView2Controller = pw.controller();
-            unsafe {
-                let _ = controller.SetBounds(RECT {
-                    left: 0,
-                    top: 0,
-                    right:  cw_phys,
-                    bottom: ch_phys,
-                });
-                let _ = controller.SetIsVisible(true);
-            }
+        use crate::{SIDEBAR_W, TITLEBAR_H};
+        let Some(win) = app.get_window("main") else { return };
+        let scale = win.scale_factor().unwrap_or(1.0);
+        let phys  = win.inner_size().unwrap_or_default();
+        let lw = phys.width  as f64 / scale;
+        let lh = phys.height as f64 / scale;
+        let x  = SIDEBAR_W as f64;
+        let y  = TITLEBAR_H as f64;
+        let _  = wv.set_bounds(tauri::Rect {
+            position: tauri::Position::Logical(tauri::LogicalPosition::new(x, y)),
+            size:     tauri::Size::Logical(tauri::LogicalSize::new(
+                (lw - x).max(1.0),
+                (lh - y).max(1.0),
+            )),
         });
     }
+    #[cfg(target_os = "windows")]
+    let _ = (app, wv);
+}
+
+/// Windows: place a service `WebviewWindow` over the main window's content area
+/// (screen coords, right of the sidebar / below the titlebar), size it to fill
+/// that area, and show it. Called on open and whenever the main window moves or
+/// resizes.
+#[cfg(target_os = "windows")]
+pub fn position_service_window(app: &AppHandle, ww: &tauri::WebviewWindow) {
+    use crate::{SIDEBAR_W, TITLEBAR_H};
+    let Some(main) = app.get_webview_window("main") else { return };
+    let scale = main.scale_factor().unwrap_or(1.0);
+    let Ok(origin) = main.inner_position() else { return };
+    let size = main.inner_size().unwrap_or_default();
+    let off_x = (SIDEBAR_W as f64 * scale).round() as i32;
+    let off_y = (TITLEBAR_H as f64 * scale).round() as i32;
+    let w = (size.width  as i32 - off_x).max(1) as u32;
+    let h = (size.height as i32 - off_y).max(1) as u32;
+    let _ = ww.set_position(tauri::PhysicalPosition::new(origin.x + off_x, origin.y + off_y));
+    let _ = ww.set_size(tauri::PhysicalSize::new(w, h));
+    let _ = ww.show();
 }
 
 #[tauri::command]
@@ -666,25 +663,13 @@ pub fn open_service(
     if let Some(wv) = app.get_webview(&label) {
         wv.show().map_err(|e| e.to_string())?;
         apply_svc_bounds(&app, &wv);
+    }
 
-        // The child's WebView2 controller initializes asynchronously and is
-        // often not ready when apply_svc_bounds runs above — its SetBounds is
-        // then dropped and the controller stays 0x0 (host sized, content black).
-        // Re-apply a few times over the next few seconds so the controller
-        // bounds land once it comes up. Idempotent and cheap.
-        #[cfg(target_os = "windows")]
-        {
-            let app2 = app.clone();
-            let label2 = label.clone();
-            tauri::async_runtime::spawn(async move {
-                for ms in [200u64, 400, 800, 1500, 3000] {
-                    tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
-                    if let Some(wv) = app2.get_webview(&label2) {
-                        apply_svc_bounds(&app2, &wv);
-                    }
-                }
-            });
-        }
+    // Windows: each service is its own borderless window. Show + reposition the
+    // active one (handles re-opens where the window was hidden on switch-away).
+    #[cfg(target_os = "windows")]
+    if let Some(ww) = app.get_webview_window(&label) {
+        position_service_window(&app, &ww);
     }
 
     *state.active_view.lock().unwrap() = Some(label);
@@ -872,91 +857,110 @@ fn ensure_service_webview_created(
 
     let parsed_url: tauri::Url = url.parse().map_err(|e| format!("{e}"))?;
     let badge_script = BADGE_MONITOR_SCRIPT.replace("__BADGE_LABEL__", label);
-    let mut builder = WebviewBuilder::new(label, WebviewUrl::External(parsed_url))
-        .data_directory(session_dir)
-        .initialization_script(&badge_script)
-        .initialization_script(ZOOM_SHORTCUT_SCRIPT);
-
-    // WebKitGTK-only shims. NOTIFICATION_GRANT, CLIPBOARD_IMAGE_SHIM,
-    // CODEC_FILTER and BLOB_VIDEO_PATCH all exist solely to work around
-    // WebKitGTK 4.1 bugs (notification-permission persistence, GTK clipboard
-    // image paste, HE-AAC decode, blob:<video> audio drop). On the Windows
-    // WebView2 (Chromium) backend they are dead weight, and BLOB_VIDEO_PATCH in
-    // particular monkey-patches URL.createObjectURL and the HTMLMediaElement
-    // `src` setter process-wide — exactly the kind of global hook that left
-    // WhatsApp Web stuck on a black splash there. Linux-only.
-    #[cfg(target_os = "linux")]
+    // ── Windows: one frameless child WebviewWindow per service ──────────────
+    // The in-window multiwebview overlay (window.add_child) never brings up a
+    // rendering controller on WebView2: the host window sizes correctly but its
+    // ICoreWebView2Controller stays 0x0, so every service painted black. A
+    // normal single-webview window renders fine, so give each service its own
+    // borderless window, owned by and overlaid on the main window's content
+    // area (positioned/sized by apply_svc_window_bounds on open + window moves).
+    #[cfg(target_os = "windows")]
     {
-        builder = builder
-            .initialization_script(NOTIFICATION_GRANT_SCRIPT)
-            .initialization_script(CLIPBOARD_IMAGE_SHIM)
-            .initialization_script(CODEC_FILTER_SCRIPT)
-            .initialization_script(BLOB_VIDEO_PATCH);
-    }
-
-    // Vorcaro driver — scrape-only in Phase B. Only injected into the chat
-    // services we can actually drive; everywhere else it's pure overhead.
-    if is_whatsapp_service(service_id) {
-        builder = builder.initialization_script(crate::vorcaro::drivers::VORCARO_WHATSAPP_DRIVER);
-    } else if is_telegram_service(service_id) {
-        builder = builder.initialization_script(crate::vorcaro::drivers::VORCARO_TELEGRAM_DRIVER);
-    }
-
-    // Diagnostic probe — opt-in via BB_DEBUG_CODEC=1. The log() helpers
-    // inside BLOB_VIDEO_PATCH and CODEC_PROBE_SCRIPT no-op unless
-    // window.__BB_DEBUG_CODEC is truthy, so we set it here only when the
-    // env var is present. Keeps the IPC chatter and unbounded
-    // /tmp/bigbox-codec-probe.log file out of normal runs.
-    if std::env::var("BB_DEBUG_CODEC").is_ok() {
-        builder = builder
-            .initialization_script("window.__BB_DEBUG_CODEC = true;")
-            .initialization_script(CODEC_PROBE_SCRIPT);
-    }
-
-    // The per-service user_agent_override values exist to make WebKitGTK (whose
-    // default UA is a bare "...AppleWebKit...") present as a desktop Chrome that
-    // services like WhatsApp/Slack/Discord accept. WebView2 already advertises a
-    // current Chromium/Edge UA, and forcing a Linux-Chrome UA string there
-    // desyncs it from the User-Agent Client Hints WebView2 keeps sending —
-    // WhatsApp Web reads both and the mismatch parks it on a black screen.
-    // Let WebView2 use its native, self-consistent identity. Linux-only.
-    #[cfg(target_os = "linux")]
-    if let Some(ua) = user_agent {
-        builder = builder.user_agent(ua);
-    }
-    #[cfg(not(target_os = "linux"))]
-    let _ = user_agent;
-
-    // Create the child webview already sized to fill the content area. On
-    // WebView2 (Windows) the controller honors the bounds it is *created* with,
-    // but ignores a later set_bounds() on a multiwebview child — so a
-    // create-at-100x100-then-resize approach left every service stuck as a
-    // 100x100 pane in the corner (the "black screen"). apply_svc_bounds still
-    // runs afterwards to track later window resizes (and for GTK on Linux).
-    let (init_pos, init_size) = {
-        let scale = window.scale_factor().unwrap_or(1.0);
-        let phys  = window.inner_size().unwrap_or_default();
-        let lw = phys.width  as f64 / scale;
-        let lh = phys.height as f64 / scale;
-        let x  = crate::SIDEBAR_W as f64;
-        let y  = crate::TITLEBAR_H as f64;
-        (
-            LogicalPosition::new(x, y),
-            LogicalSize::new((lw - x).max(1.0), (lh - y).max(1.0)),
-        )
-    };
-    match window.add_child(builder, init_pos, init_size) {
-        Ok(wv) => {
-            state.created_views.lock().unwrap().insert(label.to_string());
-              setup_webview_permissions(&wv);
-            Ok(())
+        use tauri::WebviewWindowBuilder;
+        let main_ww = app.get_webview_window("main").ok_or("main window missing")?;
+        let mut wb = WebviewWindowBuilder::new(app, label, WebviewUrl::External(parsed_url))
+            .data_directory(session_dir)
+            .initialization_script(badge_script.clone())
+            .initialization_script(ZOOM_SHORTCUT_SCRIPT)
+            .decorations(false)
+            .skip_taskbar(true)
+            .shadow(false)
+            .visible(false);
+        wb = wb.parent(&main_ww).map_err(|e| e.to_string())?;
+        if is_whatsapp_service(service_id) {
+            wb = wb.initialization_script(crate::vorcaro::drivers::VORCARO_WHATSAPP_DRIVER);
+        } else if is_telegram_service(service_id) {
+            wb = wb.initialization_script(crate::vorcaro::drivers::VORCARO_TELEGRAM_DRIVER);
         }
-        Err(e) => {
-            if app.get_webview(label).is_some() {
+        if let Some(ua) = user_agent {
+            wb = wb.user_agent(ua);
+        }
+        match wb.build() {
+            Ok(ww) => {
                 state.created_views.lock().unwrap().insert(label.to_string());
+                position_service_window(app, &ww);
                 Ok(())
-            } else {
-                Err(e.to_string())
+            }
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
+    // ── Linux / other: overlaid child webview inside the main window ────────
+    #[cfg(not(target_os = "windows"))]
+    {
+        let mut builder = WebviewBuilder::new(label, WebviewUrl::External(parsed_url))
+            .data_directory(session_dir)
+            .initialization_script(&badge_script)
+            .initialization_script(ZOOM_SHORTCUT_SCRIPT);
+
+        // WebKitGTK-only shims (notification-permission persistence, GTK
+        // clipboard image paste, HE-AAC decode, blob:<video> audio drop) — work
+        // around WebKitGTK 4.1 bugs; dead weight / harmful elsewhere. Linux-only.
+        #[cfg(target_os = "linux")]
+        {
+            builder = builder
+                .initialization_script(NOTIFICATION_GRANT_SCRIPT)
+                .initialization_script(CLIPBOARD_IMAGE_SHIM)
+                .initialization_script(CODEC_FILTER_SCRIPT)
+                .initialization_script(BLOB_VIDEO_PATCH);
+        }
+
+        // Vorcaro driver — only for the chat services we can actually drive.
+        if is_whatsapp_service(service_id) {
+            builder = builder.initialization_script(crate::vorcaro::drivers::VORCARO_WHATSAPP_DRIVER);
+        } else if is_telegram_service(service_id) {
+            builder = builder.initialization_script(crate::vorcaro::drivers::VORCARO_TELEGRAM_DRIVER);
+        }
+
+        if std::env::var("BB_DEBUG_CODEC").is_ok() {
+            builder = builder
+                .initialization_script("window.__BB_DEBUG_CODEC = true;")
+                .initialization_script(CODEC_PROBE_SCRIPT);
+        }
+
+        // UA override is a WebKitGTK accommodation; WebView2 uses its native UA.
+        #[cfg(target_os = "linux")]
+        if let Some(ua) = user_agent {
+            builder = builder.user_agent(ua);
+        }
+        #[cfg(not(target_os = "linux"))]
+        let _ = user_agent;
+
+        let (init_pos, init_size) = {
+            let scale = window.scale_factor().unwrap_or(1.0);
+            let phys  = window.inner_size().unwrap_or_default();
+            let lw = phys.width  as f64 / scale;
+            let lh = phys.height as f64 / scale;
+            let x  = crate::SIDEBAR_W as f64;
+            let y  = crate::TITLEBAR_H as f64;
+            (
+                LogicalPosition::new(x, y),
+                LogicalSize::new((lw - x).max(1.0), (lh - y).max(1.0)),
+            )
+        };
+        match window.add_child(builder, init_pos, init_size) {
+            Ok(wv) => {
+                state.created_views.lock().unwrap().insert(label.to_string());
+                setup_webview_permissions(&wv);
+                Ok(())
+            }
+            Err(e) => {
+                if app.get_webview(label).is_some() {
+                    state.created_views.lock().unwrap().insert(label.to_string());
+                    Ok(())
+                } else {
+                    Err(e.to_string())
+                }
             }
         }
     }
