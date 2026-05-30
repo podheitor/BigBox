@@ -886,26 +886,15 @@ fn ensure_service_webview_created(
     #[cfg(target_os = "windows")]
     {
         use tauri::WebviewWindowBuilder;
-        let main_ww = app.get_webview_window("main").ok_or("main window missing")?;
-        // Set geometry + visibility on the BUILDER so they apply at creation —
-        // post-creation set_position/set_size/show on a child window proved
-        // unreliable (window stayed 800x600 and hidden).
-        let scale = window.scale_factor().unwrap_or(1.0);
-        let phys  = window.inner_size().unwrap_or_default();
-        let lw = phys.width  as f64 / scale;
-        let lh = phys.height as f64 / scale;
-        let x  = crate::SIDEBAR_W as f64;
-        let y  = crate::TITLEBAR_H as f64;
+        // ISOLATION TEST: the plainest possible runtime WebviewWindow —
+        // decorated, floating, no parent, default position — to determine
+        // whether a runtime-created WebView2 renders at all (the overlay child
+        // and the borderless owned window both left the controller 0x0).
         let mut wb = WebviewWindowBuilder::new(app, label, WebviewUrl::External(parsed_url))
             .data_directory(session_dir)
             .initialization_script(badge_script.clone())
-            .initialization_script(ZOOM_SHORTCUT_SCRIPT)
-            .decorations(false)
-            .skip_taskbar(true)
-            .shadow(false)
-            .inner_size((lw - x).max(1.0), (lh - y).max(1.0))
-            .position(x, y);
-        wb = wb.parent(&main_ww).map_err(|e| e.to_string())?;
+            .title("BigBox service")
+            .inner_size(1000.0, 720.0);
         if is_whatsapp_service(service_id) {
             wb = wb.initialization_script(crate::vorcaro::drivers::VORCARO_WHATSAPP_DRIVER);
         } else if is_telegram_service(service_id) {
@@ -915,9 +904,8 @@ fn ensure_service_webview_created(
             wb = wb.user_agent(ua);
         }
         match wb.build() {
-            Ok(ww) => {
+            Ok(_ww) => {
                 state.created_views.lock().unwrap().insert(label.to_string());
-                position_service_window(app, &ww);
                 Ok(())
             }
             Err(e) => Err(e.to_string()),
