@@ -614,16 +614,20 @@ pub fn apply_svc_bounds(app: &AppHandle, wv: &tauri::Webview<tauri::Wry>) {
 #[cfg(target_os = "windows")]
 pub fn position_service_window(app: &AppHandle, ww: &tauri::WebviewWindow) {
     use crate::{SIDEBAR_W, TITLEBAR_H};
-    let Some(main) = app.get_webview_window("main") else { return };
-    let scale = main.scale_factor().unwrap_or(1.0);
-    let Ok(origin) = main.inner_position() else { return };
-    let size = main.inner_size().unwrap_or_default();
-    let off_x = (SIDEBAR_W as f64 * scale).round() as i32;
-    let off_y = (TITLEBAR_H as f64 * scale).round() as i32;
-    let w = (size.width  as i32 - off_x).max(1) as u32;
-    let h = (size.height as i32 - off_y).max(1) as u32;
-    let _ = ww.set_position(tauri::PhysicalPosition::new(origin.x + off_x, origin.y + off_y));
-    let _ = ww.set_size(tauri::PhysicalSize::new(w, h));
+    // No early returns: always end by showing the window. (inner_position()
+    // can error on a not-yet-shown window, which previously bailed before
+    // sizing/showing and left the service window 800x600 and hidden.)
+    if let Some(main) = app.get_webview_window("main") {
+        let scale  = main.scale_factor().unwrap_or(1.0);
+        let origin = main.outer_position().unwrap_or_default();
+        let size   = main.inner_size().unwrap_or_default();
+        let off_x = (SIDEBAR_W as f64 * scale).round() as i32;
+        let off_y = (TITLEBAR_H as f64 * scale).round() as i32;
+        let w = (size.width  as i32 - off_x).max(1) as u32;
+        let h = (size.height as i32 - off_y).max(1) as u32;
+        let _ = ww.set_position(tauri::PhysicalPosition::new(origin.x + off_x, origin.y + off_y));
+        let _ = ww.set_size(tauri::PhysicalSize::new(w, h));
+    }
     let _ = ww.show();
 }
 
