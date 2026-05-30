@@ -724,10 +724,23 @@ pub fn open_service(
     if let Some(ww) = app.get_webview_window(&label) {
         let _ = ww.show();
         // set_focus alone doesn't reliably reorder sibling owned windows, so the
-        // newly-selected service could stay behind the previous one. Briefly
-        // toggling topmost deterministically lifts it to the top of the stack.
-        let _ = ww.set_always_on_top(true);
-        let _ = ww.set_always_on_top(false);
+        // newly-selected service could stay behind the previous one. Bring it to
+        // the top of its (non-topmost) z-order band with SetWindowPos(HWND_TOP)
+        // — unlike always-on-top/HWND_TOPMOST, this respects the owner so the
+        // window stays above the shell without floating over other apps.
+        if let Ok(hwnd) = ww.hwnd() {
+            use windows::Win32::UI::WindowsAndMessaging::{
+                SetWindowPos, HWND_TOP, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+            };
+            unsafe {
+                let _ = SetWindowPos(
+                    hwnd,
+                    Some(HWND_TOP),
+                    0, 0, 0, 0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                );
+            }
+        }
         let _ = ww.set_focus();
     }
 
