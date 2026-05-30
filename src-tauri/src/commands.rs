@@ -728,7 +728,13 @@ pub fn open_service(
     // window on-screen there's nothing to fight over.
     #[cfg(target_os = "windows")]
     {
-        place_service_windows(&app);
+        // Service-window positioning only takes effect on the UI/event-loop
+        // thread (the boot park works because setup() runs there); this command
+        // handler runs off it, so dispatch the placement there.
+        let app2 = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            place_service_windows(&app2);
+        });
         if let Some(ww) = app.get_webview_window(&label) {
             let _ = ww.set_focus();
         }
