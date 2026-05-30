@@ -666,6 +666,25 @@ pub fn open_service(
     if let Some(wv) = app.get_webview(&label) {
         wv.show().map_err(|e| e.to_string())?;
         apply_svc_bounds(&app, &wv);
+
+        // The child's WebView2 controller initializes asynchronously and is
+        // often not ready when apply_svc_bounds runs above — its SetBounds is
+        // then dropped and the controller stays 0x0 (host sized, content black).
+        // Re-apply a few times over the next few seconds so the controller
+        // bounds land once it comes up. Idempotent and cheap.
+        #[cfg(target_os = "windows")]
+        {
+            let app2 = app.clone();
+            let label2 = label.clone();
+            tauri::async_runtime::spawn(async move {
+                for ms in [200u64, 400, 800, 1500, 3000] {
+                    tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
+                    if let Some(wv) = app2.get_webview(&label2) {
+                        apply_svc_bounds(&app2, &wv);
+                    }
+                }
+            });
+        }
     }
 
     *state.active_view.lock().unwrap() = Some(label);
