@@ -720,11 +720,18 @@ pub fn open_service(
         apply_svc_bounds(&app, &wv);
     }
 
-    // Windows: reveal + raise the pre-created service window.
+    // Windows: reveal + raise the pre-created service window. Show the webview
+    // too: hiding the window on switch-away also hides its inner webview, and
+    // window show() alone doesn't bring it back (the pane would stay blank).
     #[cfg(target_os = "windows")]
-    if let Some(ww) = app.get_webview_window(&label) {
-        let _ = ww.show();
-        let _ = ww.set_focus();
+    {
+        if let Some(wv) = app.get_webview(&label) {
+            let _ = wv.show();
+        }
+        if let Some(ww) = app.get_webview_window(&label) {
+            let _ = ww.show();
+            let _ = ww.set_focus();
+        }
     }
 
     *state.active_view.lock().unwrap() = Some(label);
