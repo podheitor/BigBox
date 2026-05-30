@@ -607,43 +607,69 @@ pub fn apply_svc_bounds(app: &AppHandle, wv: &tauri::Webview<tauri::Wry>) {
     let _ = (app, wv);
 }
 
-/// Windows: place a service `WebviewWindow` over the main window's content area
-/// (screen coords, right of the sidebar / below the titlebar), size it to fill
-/// that area, and show it. Called on open and whenever the main window moves or
-/// resizes.
+/// Windows: content-area placement (logical px) for a service window — right of
+/// the sidebar, below the titlebar — derived from the main window's size.
 #[cfg(target_os = "windows")]
-pub fn position_service_window(app: &AppHandle, ww: &tauri::WebviewWindow) {
-    // Window ops (show/set_position/set_size) must run on the UI/main thread;
-    // Tauri command handlers run off it, so dispatch there. No early returns —
-    // always end by showing the window.
-    let app = app.clone();
-    let ww = ww.clone();
-    let _ = app.clone().run_on_main_thread(move || {
-        use crate::{SIDEBAR_W, TITLEBAR_H};
-        use std::io::Write;
-        let mut dbg = String::from("[pos] main-thread");
-        if let Some(main) = app.get_webview_window("main") {
-            let scale  = main.scale_factor().unwrap_or(1.0);
-            let origin = main.outer_position().unwrap_or_default();
-            let size   = main.inner_size().unwrap_or_default();
-            let off_x = (SIDEBAR_W as f64 * scale).round() as i32;
-            let off_y = (TITLEBAR_H as f64 * scale).round() as i32;
-            let w = (size.width  as i32 - off_x).max(1) as u32;
-            let h = (size.height as i32 - off_y).max(1) as u32;
-            let rp = ww.set_position(tauri::PhysicalPosition::new(origin.x + off_x, origin.y + off_y));
-            let rs = ww.set_size(tauri::PhysicalSize::new(w, h));
-            dbg.push_str(&format!(" origin=({},{}) main={}x{} -> {}x{} setpos_ok={} setsize_ok={}",
-                origin.x, origin.y, size.width, size.height, w, h, rp.is_ok(), rs.is_ok()));
-        } else {
-            dbg.push_str(" NO_MAIN");
-        }
-        let rsh = ww.show();
-        dbg.push_str(&format!(" show_ok={}\n", rsh.is_ok()));
-        let log_path = std::env::temp_dir().join("bb_pos.log");
-        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(log_path) {
-            let _ = f.write_all(dbg.as_bytes());
-        }
-    });
+fn content_area(app: &AppHandle) -> (f64, f64, f64, f64) {
+    let x = crate::SIDEBAR_W as f64;
+    let y = crate::TITLEBAR_H as f64;
+    if let Some(window) = app.get_window("main") {
+        let scale = window.scale_factor().unwrap_or(1.0);
+        let phys  = window.inner_size().unwrap_or_default();
+        let lw = phys.width  as f64 / scale;
+        let lh = phys.height as f64 / scale;
+        (x, y, (lw - x).max(1.0), (lh - y).max(1.0))
+    } else {
+        (x, y, 800.0, 600.0)
+    }
+}
+
+/// Windows: build one hidden, borderless, content-area-sized service
+/// `WebviewWindow` owned by the main window. WebView2 controllers only paint
+/// when their webview is created on the UI thread at startup, so this is called
+/// from precreate_service_windows in setup(); open_service then reveals/raises.
+#[cfg(target_os = "windows")]
+fn build_service_window_win(
+    app: &AppHandle,
+    service_id: &str,
+    label: &str,
+    url: &str,
+    user_agent: Option<&str>,
+) -> Result<(), String> {
+    if app.get_webview_window(label).is_some() {
+        return Ok(());
+    }
+    let parsed: tauri::Url = url.parse().map_err(|e| format!("{e}"))?;
+    let session_dir = services::session_dir(service_id);
+    std::fs::create_dir_all(&session_dir).ok();
+    let (x, y, cw, ch) = content_area(app);
+    let badge = BADGE_MONITOR_SCRIPT.replace("__BADGE_LABEL__", label);
+    let wb = tauri::WebviewWindowBuilder::new(app, label.to_string(), WebviewUrl::External(parsed))
+        .data_directory(session_dir)
+        .initialization_script(badge)
+        .initialization_script(ZOOM_SHORTCUT_SCRIPT)
+        .decorations(false)
+        .skip_taskbar(true)
+        .shadow(false)
+        .visible(false)
+        .inner_size(cw, ch)
+        .position(x, y);
+    // Own it to the main window (stays above it, closes with it). parent()
+    // consumes the builder, so handle the error path explicitly.
+    let mut wb = match app.get_webview_window("main") {
+        Some(mw) => wb.parent(&mw).map_err(|e| e.to_string())?,
+        None => wb,
+    };
+    if is_whatsapp_service(service_id) {
+        wb = wb.initialization_script(crate::vorcaro::drivers::VORCARO_WHATSAPP_DRIVER);
+    } else if is_telegram_service(service_id) {
+        wb = wb.initialization_script(crate::vorcaro::drivers::VORCARO_TELEGRAM_DRIVER);
+    }
+    if let Some(ua) = user_agent {
+        wb = wb.user_agent(ua);
+    }
+    wb.build().map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -865,52 +891,13 @@ fn setup_webview_permissions(_wv: &tauri::Webview) {}
 pub fn precreate_service_windows(app: &AppHandle) {
     let cfg = config::load();
     let catalog = services::load_catalog();
-    let Some(window) = app.get_window("main") else { return };
-    let scale = window.scale_factor().unwrap_or(1.0);
-    let phys  = window.inner_size().unwrap_or_default();
-    let lw = phys.width  as f64 / scale;
-    let lh = phys.height as f64 / scale;
-    let x  = crate::SIDEBAR_W as f64;
-    let y  = crate::TITLEBAR_H as f64;
-    let cw = (lw - x).max(1.0);
-    let ch = (lh - y).max(1.0);
-    let main_ww = app.get_webview_window("main");
     let state: State<'_, AppState> = app.state();
     for us in cfg.services.iter().filter(|s| s.enabled) {
         // Vorcaro's local panel is created separately; skip it here.
         if is_vorcaro_panel(&us.id) { continue; }
         let Some(def) = catalog.iter().find(|d| d.id == us.service_type) else { continue };
         let label = svc_label(&us.id);
-        if app.get_webview_window(&label).is_some() { continue; }
-        let Ok(parsed) = def.url.parse::<tauri::Url>() else { continue };
-        let session_dir = services::session_dir(&us.id);
-        std::fs::create_dir_all(&session_dir).ok();
-        let badge = BADGE_MONITOR_SCRIPT.replace("__BADGE_LABEL__", &label);
-        let wb = tauri::WebviewWindowBuilder::new(app, label.clone(), WebviewUrl::External(parsed))
-            .data_directory(session_dir)
-            .initialization_script(badge)
-            .initialization_script(ZOOM_SHORTCUT_SCRIPT)
-            .decorations(false)
-            .skip_taskbar(true)
-            .shadow(false)
-            .visible(false)
-            .inner_size(cw, ch)
-            .position(x, y);
-        // Own the service window to the main window (stays above it, closes with
-        // it). parent() consumes the builder, so skip the service on error.
-        let mut wb = match &main_ww {
-            Some(mw) => match wb.parent(mw) { Ok(b) => b, Err(_) => continue },
-            None => wb,
-        };
-        if is_whatsapp_service(&us.id) {
-            wb = wb.initialization_script(crate::vorcaro::drivers::VORCARO_WHATSAPP_DRIVER);
-        } else if is_telegram_service(&us.id) {
-            wb = wb.initialization_script(crate::vorcaro::drivers::VORCARO_TELEGRAM_DRIVER);
-        }
-        if let Some(ua) = &def.user_agent {
-            wb = wb.user_agent(ua);
-        }
-        if wb.build().is_ok() {
+        if build_service_window_win(app, &us.id, &label, &def.url, def.user_agent.as_deref()).is_ok() {
             state.created_views.lock().unwrap().insert(label);
         }
     }
@@ -944,64 +931,22 @@ fn ensure_service_webview_created(
         return create_vorcaro_panel(app, state, &window, label, session_dir);
     }
 
-    let parsed_url: tauri::Url = url.parse().map_err(|e| format!("{e}"))?;
-    let badge_script = BADGE_MONITOR_SCRIPT.replace("__BADGE_LABEL__", label);
-    // ── Windows: one frameless child WebviewWindow per service ──────────────
-    // The in-window multiwebview overlay (window.add_child) never brings up a
-    // rendering controller on WebView2: the host window sizes correctly but its
-    // ICoreWebView2Controller stays 0x0, so every service painted black. A
-    // normal single-webview window renders fine, so give each service its own
-    // borderless window, owned by and overlaid on the main window's content
-    // area (positioned/sized by apply_svc_window_bounds on open + window moves).
+    // ── Windows: pre-created at boot; this is the rare runtime fallback ─────
+    // (e.g. a service added without an app restart). Build the same kind of
+    // hidden borderless window; it won't paint until the next launch (runtime-
+    // created WebView2 controllers stay 0x0), but it's tracked and correct.
     #[cfg(target_os = "windows")]
     {
-        use tauri::WebviewWindowBuilder;
-        // ISOLATION TEST: the plainest possible runtime WebviewWindow —
-        // decorated, floating, no parent, default position — to determine
-        // whether a runtime-created WebView2 renders at all (the overlay child
-        // and the borderless owned window both left the controller 0x0).
-        let mut wb = WebviewWindowBuilder::new(app, label, WebviewUrl::External(parsed_url))
-            .data_directory(session_dir)
-            .initialization_script(badge_script.clone())
-            .title("BigBox service")
-            .inner_size(1000.0, 720.0);
-        if is_whatsapp_service(service_id) {
-            wb = wb.initialization_script(crate::vorcaro::drivers::VORCARO_WHATSAPP_DRIVER);
-        } else if is_telegram_service(service_id) {
-            wb = wb.initialization_script(crate::vorcaro::drivers::VORCARO_TELEGRAM_DRIVER);
-        }
-        if let Some(ua) = user_agent {
-            wb = wb.user_agent(ua);
-        }
-        match wb.build() {
-            Ok(_ww) => {
-                state.created_views.lock().unwrap().insert(label.to_string());
-                // The WebView2 controller initializes asynchronously, AFTER the
-                // window's initial WM_SIZE, so Wry never sizes it and it stays
-                // 0x0 (gray/blank). Nudge the window size a few times once it's
-                // up to fire WM_SIZE -> Wry resizes the controller -> it paints.
-                let app2 = app.clone();
-                let label2 = label.to_string();
-                tauri::async_runtime::spawn(async move {
-                    for ms in [300u64, 600, 1200, 2500] {
-                        tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
-                        if let Some(w) = app2.get_webview_window(&label2) {
-                            if let Ok(sz) = w.inner_size() {
-                                let _ = w.set_size(tauri::PhysicalSize::new(sz.width.saturating_add(1), sz.height));
-                                let _ = w.set_size(sz);
-                            }
-                        }
-                    }
-                });
-                Ok(())
-            }
-            Err(e) => Err(e.to_string()),
-        }
+        build_service_window_win(app, service_id, label, url, user_agent)?;
+        state.created_views.lock().unwrap().insert(label.to_string());
+        return Ok(());
     }
 
     // ── Linux / other: overlaid child webview inside the main window ────────
     #[cfg(not(target_os = "windows"))]
     {
+        let parsed_url: tauri::Url = url.parse().map_err(|e| format!("{e}"))?;
+        let badge_script = BADGE_MONITOR_SCRIPT.replace("__BADGE_LABEL__", label);
         let mut builder = WebviewBuilder::new(label, WebviewUrl::External(parsed_url))
             .data_directory(session_dir)
             .initialization_script(&badge_script)
