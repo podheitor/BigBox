@@ -594,13 +594,40 @@ pub fn apply_svc_bounds(app: &AppHandle, wv: &tauri::Webview<tauri::Wry>) {
     let lh = phys.height as f64 / scale;
     let x  = SIDEBAR_W as f64;
     let y  = TITLEBAR_H as f64;
+    let cw = (lw - x).max(1.0);
+    let ch = (lh - y).max(1.0);
     let _  = wv.set_bounds(tauri::Rect {
         position: tauri::Position::Logical(tauri::LogicalPosition::new(x, y)),
-        size:     tauri::Size::Logical(tauri::LogicalSize::new(
-            (lw - x).max(1.0),
-            (lh - y).max(1.0),
-        )),
+        size:     tauri::Size::Logical(tauri::LogicalSize::new(cw, ch)),
     });
+
+    // On WebView2 the child webview's host HWND is sized at creation (see
+    // add_child below), but its ICoreWebView2Controller is created
+    // asynchronously *after* the host's initial WM_SIZE, so it never receives a
+    // size and stays 0x0 — the host is the right size but paints nothing
+    // (black). Wry's set_bounds() above doesn't reach a multiwebview child's
+    // controller either. Drive the controller's bounds directly: bounds are
+    // relative to its host window, so origin is (0,0) and size is the content
+    // area in physical pixels.
+    #[cfg(target_os = "windows")]
+    {
+        let cw_phys = (cw * scale).round() as i32;
+        let ch_phys = (ch * scale).round() as i32;
+        let _ = wv.with_webview(move |pw| {
+            use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Controller;
+            use windows::Win32::Foundation::RECT;
+            let controller: ICoreWebView2Controller = pw.controller();
+            unsafe {
+                let _ = controller.SetBounds(RECT {
+                    left: 0,
+                    top: 0,
+                    right:  cw_phys,
+                    bottom: ch_phys,
+                });
+                let _ = controller.SetIsVisible(true);
+            }
+        });
+    }
 }
 
 #[tauri::command]
