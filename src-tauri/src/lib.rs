@@ -111,12 +111,25 @@ pub fn run() {
             #[cfg(target_os = "linux")]
             setup_gtk_layout(app)?;
 
-            // Reposition all service WebViews when window is resized
-            #[cfg(target_os = "linux")]
+            // Keep service views aligned to the content area as the main window
+            // moves/resizes. Linux: re-bound the in-window child webviews on
+            // resize. Windows: re-place the borderless per-service windows on
+            // both move and resize (this handler runs on the UI thread, so the
+            // window ops apply).
             {
                 let window = app.get_window("main").ok_or("main window missing")?;
                 let app_h = app.handle().clone();
                 window.on_window_event(move |event| {
+                    let track = matches!(
+                        event,
+                        tauri::WindowEvent::Resized(_) | tauri::WindowEvent::Moved(_)
+                    );
+                    if !track {
+                        return;
+                    }
+                    #[cfg(target_os = "windows")]
+                    commands::reposition_service_windows(&app_h);
+                    #[cfg(not(target_os = "windows"))]
                     if let tauri::WindowEvent::Resized(_) = event {
                         let state: tauri::State<'_, commands::AppState> = app_h.state();
                         let views: Vec<String> = state.created_views.lock().unwrap().iter().cloned().collect();
@@ -128,6 +141,14 @@ pub fn run() {
                     }
                 });
             }
+
+            // Windows: WebView2 controllers only initialize/paint when their
+            // webview is created at boot on the UI thread (runtime creation from
+            // a command leaves the controller 0x0 / gray). So pre-create every
+            // configured service window here, hidden; open_service then just
+            // shows/raises the right one.
+            #[cfg(target_os = "windows")]
+            commands::precreate_service_windows(app.handle());
 
             Ok(())
         })
