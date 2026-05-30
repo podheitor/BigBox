@@ -38,8 +38,3 @@ panic      = "abort"
 gtk   = { version = "0.18", features = ["v3_24"] }
 cairo = { version = "0.18", package = "cairo-rs" }
 webkit2gtk = "2.0"
-
-# SetWindowPos(HWND_TOP) to raise the active service window above its siblings.
-# Version matches what tauri/wry resolve so the HWND type from ww.hwnd() unifies.
-[target.'cfg(windows)'.dependencies]
-windows = { version = "0.61", features = ["Win32_UI_WindowsAndMessaging", "Win32_Foundation"] }

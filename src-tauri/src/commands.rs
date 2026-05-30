@@ -714,37 +714,21 @@ pub fn open_service(
         apply_svc_bounds(&app, &wv);
     }
 
-    // Windows: reveal + raise the active service window above its siblings. We
-    // deliberately do NOT hide the other service windows: hiding a window also
-    // hides its inner webview, and re-showing the webview at runtime doesn't
-    // take effect (it stays blank). Since every service window is the same size
-    // and pinned to the content area, raising the active one fully covers the
-    // rest, and each renders the first time it is shown.
+    *state.active_view.lock().unwrap() = Some(label.clone());
+
+    // Windows: only the active service window sits on the content area; the rest
+    // are parked off-screen. We avoid hiding (which hides the inner webview, and
+    // re-showing it at runtime is a no-op) and any z-order juggling (set_focus /
+    // topmost proved unreliable for sibling owned windows) — with a single
+    // window on-screen there's nothing to fight over.
     #[cfg(target_os = "windows")]
-    if let Some(ww) = app.get_webview_window(&label) {
-        let _ = ww.show();
-        // set_focus alone doesn't reliably reorder sibling owned windows, so the
-        // newly-selected service could stay behind the previous one. Bring it to
-        // the top of its (non-topmost) z-order band with SetWindowPos(HWND_TOP)
-        // — unlike always-on-top/HWND_TOPMOST, this respects the owner so the
-        // window stays above the shell without floating over other apps.
-        if let Ok(hwnd) = ww.hwnd() {
-            use windows::Win32::UI::WindowsAndMessaging::{
-                SetWindowPos, HWND_TOP, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
-            };
-            unsafe {
-                let _ = SetWindowPos(
-                    hwnd,
-                    Some(HWND_TOP),
-                    0, 0, 0, 0,
-                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
-                );
-            }
+    {
+        place_service_windows(&app);
+        if let Some(ww) = app.get_webview_window(&label) {
+            let _ = ww.set_focus();
         }
-        let _ = ww.set_focus();
     }
 
-    *state.active_view.lock().unwrap() = Some(label);
     Ok(())
 }
 
@@ -920,12 +904,14 @@ pub fn precreate_service_windows(app: &AppHandle) {
     }
 }
 
-/// Windows: re-place every service window over the main window's content area
-/// (screen coords). Called from the main window's Moved/Resized handler — which
-/// runs on the UI thread, so set_position/set_size apply — so the borderless
-/// service windows track the main window as it moves and resizes.
+/// Windows: place service windows so only the active one is on the content area
+/// (sized to it, over the main window) and the rest are parked off-screen.
+/// Called by open_service on switch and by the main window's Moved/Resized
+/// handler so the active window tracks the main window. Selecting which window
+/// is visible by on-screen/off-screen position avoids hiding (which kills the
+/// inner webview) and z-order juggling (unreliable for sibling owned windows).
 #[cfg(target_os = "windows")]
-pub fn reposition_service_windows(app: &AppHandle) {
+pub fn place_service_windows(app: &AppHandle) {
     let Some(main) = app.get_webview_window("main") else { return };
     let scale  = main.scale_factor().unwrap_or(1.0);
     let origin = main.outer_position().unwrap_or_default();
@@ -934,14 +920,21 @@ pub fn reposition_service_windows(app: &AppHandle) {
     let off_y = (crate::TITLEBAR_H as f64 * scale).round() as i32;
     let w = (size.width  as i32 - off_x).max(1) as u32;
     let h = (size.height as i32 - off_y).max(1) as u32;
-    let pos = tauri::PhysicalPosition::new(origin.x + off_x, origin.y + off_y);
-    let sz  = tauri::PhysicalSize::new(w, h);
+    let content   = tauri::PhysicalPosition::new(origin.x + off_x, origin.y + off_y);
+    let offscreen = tauri::PhysicalPosition::new(-32000, -32000);
+    let sz = tauri::PhysicalSize::new(w, h);
     let state: State<'_, AppState> = app.state();
+    let active = state.active_view.lock().unwrap().clone();
     let labels: Vec<String> = state.created_views.lock().unwrap().iter().cloned().collect();
     for lbl in labels {
         if let Some(ww) = app.get_webview_window(&lbl) {
-            let _ = ww.set_position(pos);
             let _ = ww.set_size(sz);
+            if active.as_deref() == Some(lbl.as_str()) {
+                let _ = ww.set_position(content);
+                let _ = ww.show();
+            } else {
+                let _ = ww.set_position(offscreen);
+            }
         }
     }
 }
