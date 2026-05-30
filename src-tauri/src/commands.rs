@@ -906,6 +906,23 @@ fn ensure_service_webview_created(
         match wb.build() {
             Ok(_ww) => {
                 state.created_views.lock().unwrap().insert(label.to_string());
+                // The WebView2 controller initializes asynchronously, AFTER the
+                // window's initial WM_SIZE, so Wry never sizes it and it stays
+                // 0x0 (gray/blank). Nudge the window size a few times once it's
+                // up to fire WM_SIZE -> Wry resizes the controller -> it paints.
+                let app2 = app.clone();
+                let label2 = label.to_string();
+                tauri::async_runtime::spawn(async move {
+                    for ms in [300u64, 600, 1200, 2500] {
+                        tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
+                        if let Some(w) = app2.get_webview_window(&label2) {
+                            if let Ok(sz) = w.inner_size() {
+                                let _ = w.set_size(tauri::PhysicalSize::new(sz.width.saturating_add(1), sz.height));
+                                let _ = w.set_size(sz);
+                            }
+                        }
+                    }
+                });
                 Ok(())
             }
             Err(e) => Err(e.to_string()),
