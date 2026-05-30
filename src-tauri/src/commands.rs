@@ -642,12 +642,14 @@ fn build_service_window_win(
     let parsed: tauri::Url = url.parse().map_err(|e| format!("{e}"))?;
     let session_dir = services::session_dir(service_id);
     std::fs::create_dir_all(&session_dir).ok();
-    let (_x, _y, cw, ch) = content_area(app);
+    let (x, y, cw, ch) = content_area(app);
     let badge = BADGE_MONITOR_SCRIPT.replace("__BADGE_LABEL__", label);
-    // Created visible but off-screen: with occlusion calculation disabled (see
-    // run()), a visible off-screen window keeps rendering, so the controller
-    // initializes at boot and the service is ready to paint the instant it's
-    // moved onto the content area. (A hidden window wouldn't render at all.)
+    // Created visible (not hidden) so its WebView2 controller initializes and
+    // paints at boot — with occlusion calculation disabled (see run()) it keeps
+    // painting even once parked off-screen, so it's ready to show instantly on
+    // switch. Created on-screen at the content area because a negative builder
+    // position gets clamped; precreate_service_windows then parks it off-screen
+    // via a runtime set_position (which is not clamped).
     let wb = tauri::WebviewWindowBuilder::new(app, label.to_string(), WebviewUrl::External(parsed))
         .data_directory(session_dir)
         .initialization_script(badge)
@@ -656,7 +658,7 @@ fn build_service_window_win(
         .skip_taskbar(true)
         .shadow(false)
         .inner_size(cw, ch)
-        .position(-32000.0, -32000.0);
+        .position(x, y);
     // Own it to the main window (stays above it, closes with it). parent()
     // consumes the builder, so handle the error path explicitly.
     let mut wb = match app.get_webview_window("main") {
@@ -905,6 +907,9 @@ pub fn precreate_service_windows(app: &AppHandle) {
             state.created_views.lock().unwrap().insert(label);
         }
     }
+    // Park them all off-screen now (no active service yet) so the shell's
+    // welcome screen shows; they keep rendering off-screen (occlusion disabled).
+    place_service_windows(app);
 }
 
 /// Windows: place service windows so only the active one is on the content area
