@@ -740,17 +740,12 @@ pub fn open_service(
         if let Some(ww) = app.get_webview_window(&label) {
             let _ = ww.show();
             let _ = ww.set_focus();
-            // WebView2 doesn't repaint when a window goes hidden -> visible (a
-            // known WebView2 bug; wry only nudges it on WM_MOVE). Force it so the
-            // revealed service paints instead of staying gray/blank.
-            let _ = ww.with_webview(|pw| {
-                use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Controller;
-                let controller: ICoreWebView2Controller = pw.controller();
-                unsafe {
-                    let _ = controller.SetIsVisible(true);
-                    let _ = controller.NotifyParentWindowPositionChanged();
-                }
-            });
+        }
+        // Showing the window isn't enough: the inner webview stays hidden
+        // (SetIsVisible(false) from creation), so the rendered content doesn't
+        // composite. Show the webview itself too.
+        if let Some(wv) = app.get_webview(&label) {
+            let _ = wv.show();
         }
     }
 
