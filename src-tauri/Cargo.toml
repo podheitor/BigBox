@@ -34,6 +34,12 @@ codegen-units = 1
 strip      = true
 panic      = "abort"
 
+# Patched wry: forces a WebView2 repaint on WM_SHOWWINDOW so a hidden->shown
+# service webview paints (Windows multiwebview). wry 0.54.4 + one-arm patch;
+# see github.com/podheitor/wry@bigbox-0.54.4.
+[patch.crates-io]
+wry = { git = "https://github.com/podheitor/wry", branch = "bigbox-0.54.4" }
+
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk   = { version = "0.18", features = ["v3_24"] }
 cairo = { version = "0.18", package = "cairo-rs" }
