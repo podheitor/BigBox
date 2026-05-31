@@ -38,3 +38,9 @@ panic      = "abort"
 gtk   = { version = "0.18", features = ["v3_24"] }
 cairo = { version = "0.18", package = "cairo-rs" }
 webkit2gtk = "2.0"
+
+# ICoreWebView2Controller.NotifyParentWindowPositionChanged() — force a repaint
+# after show() (WebView2 doesn't repaint on hidden->visible; known bug). Version
+# matches what wry/tauri resolve.
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.38"
