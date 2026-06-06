@@ -85,7 +85,12 @@ pub fn run() {
                 if let Some(svc_id) = eid.strip_prefix("mark-read-") {
                     let label = format!("svc-{}", svc_id);
                     let state: tauri::State<'_, commands::AppState> = app.state();
-                    state.badges.lock().unwrap().insert(label.clone(), 0);
+                    {
+                        let mut badges = state.badges.lock().unwrap();
+                        badges.insert(label.clone(), 0);
+                        let has_any = badges.values().any(|&v| v > 0);
+                        commands::refresh_tray_icon(app, has_any);
+                    }
                     let _ = app.emit("reset-badge", serde_json::json!({ "label": label }));
                     return;
                 }
@@ -102,6 +107,7 @@ pub fn run() {
                     let state: tauri::State<'_, commands::AppState> = app.state();
                     let _ = commands::remove_service(app.clone(), state, svc_id.to_string());
                     let _ = app.emit("service-removed", serde_json::json!({ "id": svc_id }));
+                    return;
                 }
             });
             // Respawn orchestrators for campaigns that were Scheduled / Running

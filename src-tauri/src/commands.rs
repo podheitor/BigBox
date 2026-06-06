@@ -134,6 +134,76 @@ const BADGE_MONITOR_SCRIPT: &str = r#"
 })();
 "#;
 
+/// Keep the page's WebAudio context suspended while nothing is actually
+/// playing. WhatsApp/Telegram Web prime an AudioContext at load and never let
+/// it go idle, so WebKitGTK's GStreamer pulsesink holds an *uncorked* PipeWire
+/// playback stream open forever. KDE's task manager treats any uncorked stream
+/// from the window's PID as "playing audio" and overlays a speaker indicator on
+/// the taskbar button — which sits on top of the notification-count badge.
+///
+/// We auto-suspend each AudioContext shortly after creation and after playback
+/// ends, and resume it the instant real playback starts (a media element plays,
+/// or an AudioScheduledSourceNode / Audio() is started). Suspended contexts let
+/// WebKit cork/close the PipeWire stream, so the speaker indicator disappears
+/// while notification sounds still play on demand.
+const AUDIO_IDLE_SCRIPT: &str = r#"
+(function(){
+  var IDLE_MS = 1500;
+  var ctxs = new Set();
+  function anyPlaying(){
+    var els = document.querySelectorAll('audio,video');
+    for(var i=0;i<els.length;i++){
+      var e = els[i];
+      if(!e.paused && !e.ended && e.currentTime > 0 && e.readyState > 2) return true;
+    }
+    return false;
+  }
+  function maybeSuspend(ctx){
+    if(ctx.__bbActive) return;
+    if(anyPlaying()) return;
+    if(ctx.state === 'running'){ try{ ctx.suspend(); }catch(_){} }
+  }
+  function scheduleIdle(ctx){
+    clearTimeout(ctx.__bbTimer);
+    ctx.__bbTimer = setTimeout(function(){ maybeSuspend(ctx); }, IDLE_MS);
+  }
+  function resume(ctx){
+    if(ctx.state === 'suspended'){ try{ ctx.resume(); }catch(_){} }
+  }
+  function wrap(Orig){
+    if(!Orig) return Orig;
+    function Wrapped(){
+      var ctx = new Orig(arguments[0]);
+      ctxs.add(ctx);
+      // Resume + (re)arm idle timer whenever a source node starts.
+      var oc = ctx.createBufferSource;
+      if(oc){ ctx.createBufferSource = function(){
+        var n = oc.apply(ctx, arguments);
+        var os = n.start;
+        n.start = function(){ ctx.__bbActive = true; resume(ctx); var r = os.apply(n, arguments);
+          n.addEventListener('ended', function(){ ctx.__bbActive = false; scheduleIdle(ctx); });
+          return r; };
+        return n;
+      }; }
+      scheduleIdle(ctx);
+      return ctx;
+    }
+    Wrapped.prototype = Orig.prototype;
+    return Wrapped;
+  }
+  try{ window.AudioContext = wrap(window.AudioContext); }catch(_){}
+  try{ window.webkitAudioContext = wrap(window.webkitAudioContext); }catch(_){}
+
+  // Media elements: resume any suspended ctx on play; re-arm idle on pause/end.
+  function onPlay(){ ctxs.forEach(resume); }
+  function onStop(){ ctxs.forEach(scheduleIdle); }
+  document.addEventListener('play', onPlay, true);
+  document.addEventListener('playing', onPlay, true);
+  document.addEventListener('pause', onStop, true);
+  document.addEventListener('ended', onStop, true);
+})();
+"#;
+
 /// Override Notification.permission so WebKitGTK reports "granted" on page load.
 /// WebKitGTK does not persist Notification API permission across sessions.
 const NOTIFICATION_GRANT_SCRIPT: &str = r#"
@@ -652,6 +722,7 @@ fn build_service_window_win(
         .data_directory(session_dir)
         .initialization_script(badge)
         .initialization_script(ZOOM_SHORTCUT_SCRIPT)
+        .initialization_script(AUDIO_IDLE_SCRIPT)
         .decorations(false)
         .skip_taskbar(true)
         .shadow(false)
@@ -1011,7 +1082,8 @@ fn ensure_service_webview_created(
                 .initialization_script(NOTIFICATION_GRANT_SCRIPT)
                 .initialization_script(CLIPBOARD_IMAGE_SHIM)
                 .initialization_script(CODEC_FILTER_SCRIPT)
-                .initialization_script(BLOB_VIDEO_PATCH);
+                .initialization_script(BLOB_VIDEO_PATCH)
+                .initialization_script(AUDIO_IDLE_SCRIPT);
         }
 
         // Vorcaro driver — only for the chat services we can actually drive.
@@ -1233,7 +1305,12 @@ pub fn update_badge(
     label: String,
     count: u32,
 ) -> Result<(), String> {
-    state.badges.lock().unwrap().insert(label.clone(), count);
+    {
+        let mut badges = state.badges.lock().unwrap();
+        badges.insert(label.clone(), count);
+        let has_any = badges.values().any(|&v| v > 0);
+        refresh_tray_icon(&app, has_any);
+    }
     app.emit("badge-update", serde_json::json!({ "label": label, "count": count }))
         .map_err(|e| e.to_string())?;
     Ok(())
@@ -1246,11 +1323,55 @@ pub fn clear_badge(
     state: State<'_, AppState>,
     label: String,
 ) -> Result<(), String> {
-    // Clear stored badge
-    state.badges.lock().unwrap().insert(label.clone(), 0);
-    // Emit reset to shell
+    {
+        let mut badges = state.badges.lock().unwrap();
+        badges.insert(label.clone(), 0);
+        let has_any = badges.values().any(|&v| v > 0);
+        refresh_tray_icon(&app, has_any);
+    }
     app.emit("reset-badge", serde_json::json!({ "label": label }))
         .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub fn refresh_tray_icon(_app: &AppHandle, has_notifications: bool) {
+    #[cfg(target_os = "linux")]
+    {
+        // KDE only honors the Unity LauncherEntry API for taskbar-button badges
+        // (it ignores live _NET_WM_ICON changes for associated launchers). So we
+        // emit that signal; KDE renders the count badge on the BigBox button.
+        std::thread::spawn(move || {
+            if let Ok(rt) = tokio::runtime::Builder::new_current_thread().enable_all().build() {
+                let _ = rt.block_on(set_launcher_badge(has_notifications));
+            }
+        });
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = has_notifications;
+}
+
+#[cfg(target_os = "linux")]
+async fn set_launcher_badge(show: bool) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    use zbus::Connection;
+    use zbus::zvariant::{OwnedValue, Value};
+    use std::collections::HashMap;
+
+    let conn = Connection::session().await?;
+
+    // KDE SmartLauncherBackend listens for this signal on any path/sender.
+    // Must be emitted (not called) with signature sa{sv}.
+    let mut props: HashMap<String, OwnedValue> = HashMap::new();
+    props.insert("count-visible".into(), Value::new(show).try_into()?);
+    props.insert("count".into(), Value::new(1i64).try_into()?);
+
+    conn.emit_signal(
+        None::<&str>,
+        "/com/canonical/unity/launcherentry/1",
+        "com.canonical.Unity.LauncherEntry",
+        "Update",
+        &("application://bigbox.desktop", props),
+    ).await?;
+
     Ok(())
 }
 

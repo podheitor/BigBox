@@ -1410,6 +1410,11 @@ pub const VORCARO_WHATSAPP_DRIVER: &str = r#"
     // Skip elements whose title is a tooltip/instruction (e.g. "clique para
     // mostrar os dados do contato") — those aren't the contact's name.
     var TOOLTIP_REGEX = /(clique|click|tap)\s+para/i;
+    // Skip the business-account badge that WhatsApp shows in the header for
+    // WA Business contacts ("Conta comercial" / "Business account"). It is a
+    // span[title] that often precedes the real name span — without this we
+    // mistake the badge for the contact name and abort the send.
+    var BIZ_BADGE_REGEX = /^(conta\s+(comercial|empresarial|de\s+empresa)|business\s+account|official\s+business\s+account)$/i;
 
     function pickName(scope) {
       var candidates = scope.querySelectorAll('span[title]');
@@ -1417,6 +1422,7 @@ pub const VORCARO_WHATSAPP_DRIVER: &str = r#"
         var t = (candidates[i].getAttribute('title') || candidates[i].textContent || '').trim();
         if (!t) continue;
         if (TOOLTIP_REGEX.test(t)) continue;
+        if (BIZ_BADGE_REGEX.test(t)) continue; // skip WA Business account badge
         if (/^[\s\d:•]+$/.test(t)) continue; // skip timestamps / counters
         return t;
       }

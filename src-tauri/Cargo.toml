@@ -1,6 +1,6 @@
 [package]
 name = "bigbox"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2021"
 license = "GPL-3.0-or-later"
 authors = ["Heitor Faria"]
@@ -44,3 +44,4 @@ wry = { git = "https://github.com/podheitor/wry", branch = "bigbox-0.54.4" }
 gtk   = { version = "0.18", features = ["v3_24"] }
 cairo = { version = "0.18", package = "cairo-rs" }
 webkit2gtk = "2.0"
+zbus = { version = "5", default-features = false, features = ["tokio"] }
