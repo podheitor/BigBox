@@ -119,7 +119,7 @@ async function preloadRemainingServices(excludeId) {
     try {
       await invoke('preload_service', {
         serviceId: svc.id,
-        url: def.url,
+        url: svc.url || def.url,
         userAgent: def.user_agent_override || null,
       });
     } catch (e) {
@@ -255,7 +255,7 @@ async function selectService(id) {
     try {
         await invoke('open_service', {
             serviceId: id,
-            url: def.url,
+            url: svc.url || def.url,
             userAgent: def.user_agent_override || null,
         });
         saveLastActiveServiceId(id);
@@ -329,7 +329,7 @@ async function closeDialog() {
                 // open_service internally collapses shell + shows service
                 await invoke('open_service', {
                     serviceId: id,
-                    url: def.url,
+                    url: svc.url || def.url,
                     userAgent: def.user_agent_override || null,
                 });
                 saveLastActiveServiceId(id);
@@ -380,10 +380,17 @@ function renderActiveList() {
 }
 
 async function addService(def) {
+    // Self-hosted services (Carbonio) have no fixed URL — ask the user.
+    let url = null;
+    if (def.requires_url) {
+        url = await promptForUrl(def);
+        if (!url) return;  // user cancelled
+    }
     try {
         config = await invoke('add_service', {
             serviceType: def.id,
             displayName: def.name,
+            url,
         });
         renderSidebar();
         renderActiveList();
@@ -391,6 +398,56 @@ async function addService(def) {
     } catch (e) {
         console.error('add_service error:', e);
     }
+}
+
+// Small modal that asks the user for a self-hosted server URL.
+// Resolves to a normalized https URL, or null if cancelled/invalid-and-closed.
+function promptForUrl(def) {
+    return new Promise(resolve => {
+        const dlg    = document.getElementById('dialog-url');
+        const input  = document.getElementById('url-input');
+        const title  = document.getElementById('url-title');
+        const btnOk  = document.getElementById('btn-url-confirm');
+        const btnCnl = document.getElementById('btn-url-cancel');
+        const btnX   = document.getElementById('btn-url-close');
+
+        title.textContent = `${def.name} server URL`;
+        input.value = '';
+        input.classList.remove('invalid');
+
+        const normalize = (raw) => {
+            let u = (raw || '').trim();
+            if (!u) return null;
+            if (!/^https?:\/\//i.test(u)) u = 'https://' + u;
+            try { new URL(u); } catch { return null; }
+            return u;
+        };
+        const cleanup = () => {
+            btnOk.removeEventListener('click', onOk);
+            btnCnl.removeEventListener('click', onCancel);
+            btnX.removeEventListener('click', onCancel);
+            input.removeEventListener('keydown', onKey);
+        };
+        const finish = (val) => { cleanup(); dlg.close(); resolve(val); };
+        const onOk = () => {
+            const u = normalize(input.value);
+            if (!u) { input.classList.add('invalid'); input.focus(); return; }
+            finish(u);
+        };
+        const onCancel = () => finish(null);
+        const onKey = (e) => {
+            if (e.key === 'Enter')  { e.preventDefault(); onOk(); }
+            if (e.key === 'Escape') { e.preventDefault(); onCancel(); }
+        };
+
+        btnOk.addEventListener('click', onOk);
+        btnCnl.addEventListener('click', onCancel);
+        btnX.addEventListener('click', onCancel);
+        input.addEventListener('keydown', onKey);
+
+        dlg.showModal();
+        input.focus();
+    });
 }
 
 async function removeService(id) {

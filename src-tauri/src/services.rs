@@ -15,6 +15,10 @@ pub struct ServiceDef {
     #[serde(default)]
     #[serde(rename = "user_agent_override")]
     pub user_agent: Option<String>,
+    /// Self-hosted services (e.g. Carbonio) have no fixed URL — the user
+    /// supplies their server address when adding the service.
+    #[serde(default)]
+    pub requires_url: bool,
 }
 
 /// Embedded services catalog (compiled into the binary)

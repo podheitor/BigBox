@@ -40,6 +40,23 @@
     "user_agent_override": null
   },
   {
+    "id": "outlook",
+    "name": "Outlook",
+    "url": "https://outlook.cloud.microsoft/",
+    "icon": null,
+    "color": "#0078D4",
+    "user_agent_override": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+  },
+  {
+    "id": "carbonio",
+    "name": "Carbonio",
+    "url": "",
+    "icon": null,
+    "color": "#137A6E",
+    "user_agent_override": null,
+    "requires_url": true
+  },
+  {
     "id": "google_calendar",
     "name": "Google Calendar",
     "url": "https://calendar.google.com",

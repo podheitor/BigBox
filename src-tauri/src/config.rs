@@ -11,6 +11,10 @@ pub struct UserService {
     pub id:           String,
     pub service_type: String,
     pub display_name: String,
+    /// Per-instance URL override for self-hosted services (e.g. Carbonio).
+    /// `None` → use the catalog's default URL.
+    #[serde(default)]
+    pub url: Option<String>,
     #[serde(default = "default_true")]
     pub enabled: bool,
 }

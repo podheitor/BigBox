@@ -370,6 +370,45 @@ dialog::backdrop {
   margin-bottom: 12px;
 }
 
+/* ── Server URL prompt ────────────────────────────────── */
+#dialog-url { max-width: 440px; }
+.url-hint {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+#url-input {
+  width: 100%;
+  padding: 10px 12px;
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+#url-input:focus  { border-color: var(--accent); }
+#url-input.invalid { border-color: #e64553; }
+.url-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.url-actions .btn-primary { margin-top: 0; }
+.btn-secondary {
+  padding: 10px 20px;
+  background: var(--bg-hover);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.btn-secondary:hover { background: var(--border); }
+
 /* ── Catalog grid ─────────────────────────────────────── */
 #catalog-grid {
   display: grid;

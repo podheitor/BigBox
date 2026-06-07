@@ -40,7 +40,11 @@ pub fn get_catalog() -> Vec<ServiceDef> {
 }
 
 #[tauri::command]
-pub fn add_service(service_type: String, display_name: String) -> AppConfig {
+pub fn add_service(
+    service_type: String,
+    display_name: String,
+    url:          Option<String>,
+) -> AppConfig {
     let mut cfg = config::load();
 
     let count = cfg.services.iter()
@@ -53,7 +57,13 @@ pub fn add_service(service_type: String, display_name: String) -> AppConfig {
         format!("{service_type}_{}", count + 1)
     };
 
-    cfg.services.push(UserService { id, service_type, display_name, enabled: true });
+    // Only keep a non-empty http(s) override; otherwise fall back to catalog URL.
+    let url = url.and_then(|u| {
+        let u = u.trim().to_string();
+        (u.starts_with("http://") || u.starts_with("https://")).then_some(u)
+    });
+
+    cfg.services.push(UserService { id, service_type, display_name, url, enabled: true });
     config::save(&cfg);
     cfg
 }
@@ -852,9 +862,39 @@ pub fn preload_service(
 }
 
 
+/// True for OAuth / sign-in URLs that must stay inside the embedded webview so
+/// they share the service's cookie jar. If these are sent to the system browser
+/// (xdg-open) the login completes in a *different* cookie store and the embedded
+/// view never becomes authenticated. Everything else (links inside a message,
+/// etc.) should still open externally.
+#[cfg(target_os = "linux")]
+fn is_login_url(url: &str) -> bool {
+    // Host-based allowlist of identity providers used by the bundled services.
+    const AUTH_HOSTS: &[&str] = &[
+        "accounts.google.com",
+        "accounts.youtube.com",
+        "login.microsoftonline.com",
+        "login.live.com",
+        "login.microsoft.com",
+        "login.windows.net",
+        "account.live.com",
+        "oauth.telegram.org",
+        "github.com/login",
+        "slack.com/oauth",
+        "discord.com/oauth",
+        "discord.com/login",
+    ];
+    let lower = url.to_ascii_lowercase();
+    AUTH_HOSTS.iter().any(|h| {
+        // match scheme-agnostic host or host+path prefix
+        lower.contains(&format!("://{h}")) || lower.contains(&format!("://www.{h}"))
+    })
+}
+
 /// Auto-grant notification/media permissions for service WebViews,
 /// enable clipboard + HTML5 media settings, and route external links
-/// (target="_blank" / window.open) to the system browser via xdg-open.
+/// (target="_blank" / window.open) to the system browser via xdg-open —
+/// except OAuth/login URLs, which stay in the embedded view (see is_login_url).
 #[cfg(target_os = "linux")]
 fn setup_webview_permissions(wv: &tauri::Webview) {
     let _ = wv.with_webview(|platform_wv| {
@@ -892,9 +932,10 @@ fn setup_webview_permissions(wv: &tauri::Webview) {
             // forcing Always would re-trigger them.
         }
 
-        // 3. target="_blank" / window.open → ignore inside the embedded view
-        //    and hand the URL to the system browser.
-        inner.connect_decide_policy(|_wv, decision, dtype| {
+        // 3. target="_blank" / window.open → OAuth/login URLs stay in the
+        //    embedded view (so they share the cookie jar and login can
+        //    complete); every other URL is handed to the system browser.
+        inner.connect_decide_policy(|wv, decision, dtype| {
             use webkit2gtk::glib::Cast;
             if dtype != PolicyDecisionType::NewWindowAction {
                 return false;
@@ -910,21 +951,26 @@ fn setup_webview_permissions(wv: &tauri::Webview) {
                 .and_then(|r| r.uri())
                 .map(|s| s.to_string())
                 .unwrap_or_default();
-            if url.starts_with("http://") || url.starts_with("https://") {
+            if is_login_url(&url) {
+                wv.load_uri(&url);
+            } else if url.starts_with("http://") || url.starts_with("https://") {
                 let _ = std::process::Command::new("xdg-open").arg(&url).spawn();
             }
             decision.ignore();
             true
         });
 
-        // 4. window.open() that bypasses decide-policy (rare) → also xdg-open.
-        inner.connect_create(|_wv, action| {
+        // 4. window.open() that bypasses decide-policy (rare). Same rule:
+        //    login URLs load in place, the rest go to the system browser.
+        inner.connect_create(|wv, action| {
             let url = action
                 .request()
                 .and_then(|r| r.uri())
                 .map(|s| s.to_string())
                 .unwrap_or_default();
-            if url.starts_with("http://") || url.starts_with("https://") {
+            if is_login_url(&url) {
+                wv.load_uri(&url);
+            } else if url.starts_with("http://") || url.starts_with("https://") {
                 let _ = std::process::Command::new("xdg-open").arg(&url).spawn();
             }
             None

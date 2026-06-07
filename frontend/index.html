@@ -91,6 +91,26 @@
     </div>
   </dialog>
 
+  <!-- Server URL prompt (self-hosted services, e.g. Carbonio) -->
+  <dialog id="dialog-url">
+    <div class="dialog-header">
+      <h2 id="url-title">Server URL</h2>
+      <button id="btn-url-close" class="icon-btn">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
+        </svg>
+      </button>
+    </div>
+    <div class="dialog-body">
+      <p class="url-hint">Enter your server's webmail address.</p>
+      <input id="url-input" type="url" placeholder="https://mail.example.com" autocomplete="off" spellcheck="false" />
+      <div class="url-actions">
+        <button id="btn-url-cancel" class="btn-secondary">Cancel</button>
+        <button id="btn-url-confirm" class="btn-primary">Add</button>
+      </div>
+    </div>
+  </dialog>
+
   
   <!-- About dialog -->
   <dialog id="dialog-about">
