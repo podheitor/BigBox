@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2025 Heitor Faria
 
-//! Tauri IPC commands — config CRUD + embedded service WebView management
+//! `bigbox-shell` — Tauri IPC commands: config CRUD + the embedded service
+//! WebView host, plus the GTK overlay layout that positions those webviews.
+//! This is one of the two Tauri-edge crates; it is a sibling of
+//! `bigbox-vorcaro` (neither depends on the other — they join only at the app).
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
@@ -10,8 +13,9 @@ use tauri::menu::{Menu, MenuItemBuilder, PredefinedMenuItem};
 use tauri::{AppHandle, Emitter, Manager, State, WebviewBuilder, WebviewUrl};
 use tauri::{LogicalPosition, LogicalSize};
 
-use crate::config::{self, AppConfig, UserService};
-use crate::services::{self, ServiceDef};
+use bigbox_config::config::{self, AppConfig, UserService};
+use bigbox_config::services::{self, ServiceDef};
+use bigbox_core::layout::{SIDEBAR_W, TITLEBAR_H};
 
 // ── Shared state ─────────────────────────────────────────────────
 
@@ -667,7 +671,6 @@ const ZOOM_SHORTCUT_SCRIPT: &str = r#"
 pub fn apply_svc_bounds(app: &AppHandle, wv: &tauri::Webview<tauri::Wry>) {
     #[cfg(not(target_os = "windows"))]
     {
-        use crate::{SIDEBAR_W, TITLEBAR_H};
         let Some(win) = app.get_window("main") else { return };
         let scale = win.scale_factor().unwrap_or(1.0);
         let phys  = win.inner_size().unwrap_or_default();
@@ -691,8 +694,8 @@ pub fn apply_svc_bounds(app: &AppHandle, wv: &tauri::Webview<tauri::Wry>) {
 /// the sidebar, below the titlebar — derived from the main window's size.
 #[cfg(target_os = "windows")]
 fn content_area(app: &AppHandle) -> (f64, f64, f64, f64) {
-    let x = crate::SIDEBAR_W as f64;
-    let y = crate::TITLEBAR_H as f64;
+    let x = SIDEBAR_W as f64;
+    let y = TITLEBAR_H as f64;
     if let Some(window) = app.get_window("main") {
         let scale = window.scale_factor().unwrap_or(1.0);
         let phys  = window.inner_size().unwrap_or_default();
@@ -746,9 +749,9 @@ fn build_service_window_win(
         None => wb,
     };
     if is_whatsapp_service(service_id) {
-        wb = wb.initialization_script(crate::vorcaro::drivers::VORCARO_WHATSAPP_DRIVER);
+        wb = wb.initialization_script(bigbox_driver_assets::whatsapp());
     } else if is_telegram_service(service_id) {
-        wb = wb.initialization_script(crate::vorcaro::drivers::VORCARO_TELEGRAM_DRIVER);
+        wb = wb.initialization_script(bigbox_driver_assets::telegram());
     }
     if let Some(ua) = user_agent {
         wb = wb.user_agent(ua);
@@ -769,7 +772,7 @@ pub fn open_service(
 
     // Collapse shell to sidebar-only (Linux GtkBox packing)
     #[cfg(target_os = "linux")]
-    crate::collapse_shell_impl(&app);
+    collapse_shell_impl(&app);
 
     // Linux/other: hide the other in-window service webviews. (Windows raises
     // the active window instead — see below.)
@@ -1054,8 +1057,8 @@ pub fn reposition_service_windows(app: &AppHandle) {
     let scale  = main.scale_factor().unwrap_or(1.0);
     let origin = main.outer_position().unwrap_or_default();
     let size   = main.inner_size().unwrap_or_default();
-    let off_x = (crate::SIDEBAR_W as f64 * scale).round() as i32;
-    let off_y = (crate::TITLEBAR_H as f64 * scale).round() as i32;
+    let off_x = (SIDEBAR_W as f64 * scale).round() as i32;
+    let off_y = (TITLEBAR_H as f64 * scale).round() as i32;
     let w = (size.width  as i32 - off_x).max(1) as u32;
     let h = (size.height as i32 - off_y).max(1) as u32;
     let pos = tauri::PhysicalPosition::new(origin.x + off_x, origin.y + off_y);
@@ -1134,9 +1137,9 @@ fn ensure_service_webview_created(
 
         // Vorcaro driver — only for the chat services we can actually drive.
         if is_whatsapp_service(service_id) {
-            builder = builder.initialization_script(crate::vorcaro::drivers::VORCARO_WHATSAPP_DRIVER);
+            builder = builder.initialization_script(bigbox_driver_assets::whatsapp());
         } else if is_telegram_service(service_id) {
-            builder = builder.initialization_script(crate::vorcaro::drivers::VORCARO_TELEGRAM_DRIVER);
+            builder = builder.initialization_script(bigbox_driver_assets::telegram());
         }
 
         if std::env::var("BB_DEBUG_CODEC").is_ok() {
@@ -1158,8 +1161,8 @@ fn ensure_service_webview_created(
             let phys  = window.inner_size().unwrap_or_default();
             let lw = phys.width  as f64 / scale;
             let lh = phys.height as f64 / scale;
-            let x  = crate::SIDEBAR_W as f64;
-            let y  = crate::TITLEBAR_H as f64;
+            let x  = SIDEBAR_W as f64;
+            let y  = TITLEBAR_H as f64;
             (
                 LogicalPosition::new(x, y),
                 LogicalSize::new((lw - x).max(1.0), (lh - y).max(1.0)),
@@ -1328,7 +1331,7 @@ pub fn zoom_service(
 #[allow(unused_variables)]
 pub fn expand_shell(app: AppHandle) {
     #[cfg(target_os = "linux")]
-    crate::expand_shell_impl(&app);
+    expand_shell_impl(&app);
 }
 
 /// Collapse shell to 64px sidebar (when service is active).
@@ -1336,7 +1339,7 @@ pub fn expand_shell(app: AppHandle) {
 #[allow(unused_variables)]
 pub fn collapse_shell(app: AppHandle) {
     #[cfg(target_os = "linux")]
-    crate::collapse_shell_impl(&app);
+    collapse_shell_impl(&app);
 }
 
 
@@ -1531,4 +1534,96 @@ fn create_vorcaro_panel(
             }
         }
     }
+}
+
+// ── GTK overlay layout (Linux) ───────────────────────────────────
+// Positions the shell + service webviews inside the main window. Lives here
+// (the webview host) so the IPC commands above can drive collapse/expand
+// without an upward dependency on the app crate. The app calls
+// `setup_gtk_layout` once during Builder setup.
+
+#[cfg(target_os = "linux")]
+use std::cell::RefCell;
+
+#[cfg(target_os = "linux")]
+thread_local! {
+    static CACHED_VBOX: RefCell<Option<gtk::Box>> = const { RefCell::new(None) };
+}
+
+/// Setup GTK horizontal box layout with overlay-style service view positioning.
+///
+/// Layout strategy:
+///   child[0] (shell WebView) → always full window (titlebar + sidebar visible)
+///   child[1..] (service views) → overlaid at (SIDEBAR_W, TITLEBAR_H) offset
+///
+/// WebKitWebView natural size is huge → GtkBox packing cannot shrink it.
+/// Only size_allocate override on the GtkBox reliably sets bounds on Wayland.
+#[cfg(target_os = "linux")]
+pub fn setup_gtk_layout(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    use gtk::prelude::*;
+
+    let window = app.get_webview_window("main").ok_or("main window not found")?;
+    let vbox: gtk::Box = window.default_vbox()?;
+    vbox.set_orientation(gtk::Orientation::Horizontal);
+    vbox.set_spacing(0);
+
+    // GTK CSS: dark background matching app theme → fixes edge strips
+    let css = gtk::CssProvider::new();
+    css.load_from_data(b"window, box { background-color: transparent; }").ok();
+    if let Some(screen) = gtk::gdk::Screen::default() {
+        gtk::StyleContext::add_provider_for_screen(
+            &screen, &css, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
+    }
+
+    // Override allocations: shell always full, services overlaid at content offset.
+    vbox.connect_size_allocate(|bx, alloc| {
+        let children = bx.children();
+        if children.is_empty() { return; }
+
+        let x0 = alloc.x();
+        let y0 = alloc.y();
+        let w  = alloc.width();
+        let h  = alloc.height();
+
+        // Shell: full window (titlebar + sidebar always visible)
+        children[0].size_allocate(&gtk::Allocation::new(x0, y0, w, h));
+
+        if children.len() < 2 { return; }
+
+        // Services: overlaid on content area (skips sidebar width + titlebar height)
+        let svc_x = x0 + SIDEBAR_W;
+        let svc_y = y0 + TITLEBAR_H;
+        let svc_w = (w - SIDEBAR_W).max(1);
+        let svc_h = (h - TITLEBAR_H).max(1);
+        for child in &children[1..] {
+            child.size_allocate(&gtk::Allocation::new(svc_x, svc_y, svc_w, svc_h));
+        }
+    });
+
+    CACHED_VBOX.with(|cell| *cell.borrow_mut() = Some(vbox));
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+pub fn with_vbox(f: impl FnOnce(&gtk::Box)) {
+    CACHED_VBOX.with(|cell| {
+        if let Some(ref vbox) = *cell.borrow() {
+            f(vbox);
+        }
+    });
+}
+
+/// Shell is always full size now — only trigger resize for GTK to re-apply allocations.
+#[cfg(target_os = "linux")]
+pub fn collapse_shell_impl(_app: &tauri::AppHandle) {
+    use gtk::prelude::*;
+    with_vbox(|vbox| vbox.queue_resize());
+}
+
+/// Same as collapse — shell stays full size, resize ensures correct child allocations.
+#[cfg(target_os = "linux")]
+pub fn expand_shell_impl(_app: &tauri::AppHandle) {
+    use gtk::prelude::*;
+    with_vbox(|vbox| vbox.queue_resize());
 }

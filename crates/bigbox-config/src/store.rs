@@ -5,7 +5,7 @@
 
 use std::path::PathBuf;
 
-use super::model::VorcaroState;
+use bigbox_core::vorcaro::VorcaroState;
 
 pub fn state_path() -> PathBuf {
     dirs::config_dir()

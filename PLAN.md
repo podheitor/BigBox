@@ -1,5 +1,13 @@
 # BigBox — Development Plan
 
+> ## 🔴 TOP PRIORITY (next session): Cargo workspace refactor
+> Turn the single `src-tauri` crate into a 10-crate Cargo workspace with true
+> compilation isolation and parallel builds. **Full spec:**
+> [docs/WORKSPACE-REFACTOR-PLAN.md](docs/WORKSPACE-REFACTOR-PLAN.md).
+> The crux is inverting the Tauri dependency out of the campaign orchestrator
+> (ports & adapters) so the most-edited code stops dragging the heaviest deps.
+> Everything below is paused behind this.
+
 ## Status: ✅ MVP Complete
 
 ### Phase 1: Core — ✅ DONE

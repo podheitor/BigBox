@@ -1,0 +1,14 @@
+[package]
+name = "bigbox-contract"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+# The port traits the engine talks out through, plus (later) the platform-driver
+# semantic contract. deps: bigbox-core + the vocabulary the port signatures use.
+# NO tauri, NO tokio, NO reqwest.
+[dependencies]
+bigbox-core.workspace = true
+uuid.workspace = true
+serde_json.workspace = true

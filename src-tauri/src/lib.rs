@@ -1,22 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2025 Heitor Faria
 
-//! BigBox — Tauri v2 entry point
+//! BigBox — Tauri v2 entry point. App-composition crate: the only place that
+//! wires every layer together (Builder, IPC handler registration, window/GTK
+//! setup). Domain logic lives in the inner crates; the GTK overlay layout lives
+//! in `bigbox-shell`.
 
-pub mod commands;
-pub mod config;
-pub mod services;
-pub mod vorcaro;
+use bigbox_shell as commands;
+use bigbox_vorcaro as vorcaro;
 
 use commands::AppState;
 use tauri::{Emitter, Manager};
 use vorcaro::orchestrator::OrchestratorState;
 use vorcaro::VorcaroStore;
-
-/// Titlebar height (must match CSS `#titlebar { height }`)
-pub const TITLEBAR_H: i32 = 30;
-/// Sidebar width (must match CSS `--sidebar-w`)
-pub const SIDEBAR_W: i32 = 64;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -115,7 +111,7 @@ pub fn run() {
             vorcaro::rehydrate_on_boot(app.handle().clone());
 
             #[cfg(target_os = "linux")]
-            setup_gtk_layout(app)?;
+            commands::setup_gtk_layout(app)?;
 
             // Keep service views aligned to the content area as the main window
             // moves/resizes. Linux: re-bound the in-window child webviews on
@@ -160,90 +156,4 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running bigbox");
-}
-
-#[cfg(target_os = "linux")]
-use std::cell::RefCell;
-
-#[cfg(target_os = "linux")]
-thread_local! {
-    static CACHED_VBOX: RefCell<Option<gtk::Box>> = const { RefCell::new(None) };
-}
-
-/// Setup GTK horizontal box layout with overlay-style service view positioning.
-///
-/// Layout strategy:
-///   child[0] (shell WebView) → always full window (titlebar + sidebar visible)
-///   child[1..] (service views) → overlaid at (SIDEBAR_W, TITLEBAR_H) offset
-///
-/// WebKitWebView natural size is huge → GtkBox packing cannot shrink it.
-/// Only size_allocate override on the GtkBox reliably sets bounds on Wayland.
-#[cfg(target_os = "linux")]
-fn setup_gtk_layout(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
-    use gtk::prelude::*;
-
-    let window = app.get_webview_window("main").ok_or("main window not found")?;
-    let vbox: gtk::Box = window.default_vbox()?;
-    vbox.set_orientation(gtk::Orientation::Horizontal);
-    vbox.set_spacing(0);
-
-    // GTK CSS: dark background matching app theme → fixes edge strips
-    let css = gtk::CssProvider::new();
-    css.load_from_data(b"window, box { background-color: transparent; }").ok();
-    if let Some(screen) = gtk::gdk::Screen::default() {
-        gtk::StyleContext::add_provider_for_screen(
-            &screen, &css, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
-        );
-    }
-
-    // Override allocations: shell always full, services overlaid at content offset.
-    vbox.connect_size_allocate(|bx, alloc| {
-        let children = bx.children();
-        if children.is_empty() { return; }
-
-        let x0 = alloc.x();
-        let y0 = alloc.y();
-        let w  = alloc.width();
-        let h  = alloc.height();
-
-        // Shell: full window (titlebar + sidebar always visible)
-        children[0].size_allocate(&gtk::Allocation::new(x0, y0, w, h));
-
-        if children.len() < 2 { return; }
-
-        // Services: overlaid on content area (skips sidebar width + titlebar height)
-        let svc_x = x0 + SIDEBAR_W;
-        let svc_y = y0 + TITLEBAR_H;
-        let svc_w = (w - SIDEBAR_W).max(1);
-        let svc_h = (h - TITLEBAR_H).max(1);
-        for child in &children[1..] {
-            child.size_allocate(&gtk::Allocation::new(svc_x, svc_y, svc_w, svc_h));
-        }
-    });
-
-    CACHED_VBOX.with(|cell| *cell.borrow_mut() = Some(vbox));
-    Ok(())
-}
-
-#[cfg(target_os = "linux")]
-pub fn with_vbox(f: impl FnOnce(&gtk::Box)) {
-    CACHED_VBOX.with(|cell| {
-        if let Some(ref vbox) = *cell.borrow() {
-            f(vbox);
-        }
-    });
-}
-
-/// Shell is always full size now — only trigger resize for GTK to re-apply allocations.
-#[cfg(target_os = "linux")]
-pub fn collapse_shell_impl(_app: &tauri::AppHandle) {
-    use gtk::prelude::*;
-    with_vbox(|vbox| vbox.queue_resize());
-}
-
-/// Same as collapse — shell stays full size, resize ensures correct child allocations.
-#[cfg(target_os = "linux")]
-pub fn expand_shell_impl(_app: &tauri::AppHandle) {
-    use gtk::prelude::*;
-    with_vbox(|vbox| vbox.queue_resize());
 }

@@ -1,0 +1,22 @@
+[package]
+name = "bigbox-shell"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+# Tauri-edge crate: the webview host IPC + GTK overlay layout. Sibling of
+# bigbox-vorcaro (no dependency between them — they join only at the app).
+[dependencies]
+tauri.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+dirs.workspace = true
+bigbox-core.workspace = true
+bigbox-config.workspace = true
+bigbox-driver-assets.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = { version = "0.18", features = ["v3_24"] }
+webkit2gtk = "2.0"
+zbus = { version = "5", default-features = false, features = ["tokio"] }

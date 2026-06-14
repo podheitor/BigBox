@@ -22,8 +22,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use super::orchestrator::SendOutcome;
-use super::model::SendStatus;
+use bigbox_core::vorcaro::{SendOutcome, SendStatus};
 
 const DEFAULT_API_VERSION: &str = "v17.0";
 const GRAPH_BASE: &str = "https://graph.facebook.com";

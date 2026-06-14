@@ -3,6 +3,7 @@ fn main() {
     println!("cargo:rerun-if-changed=../frontend/index.html");
     println!("cargo:rerun-if-changed=../frontend/style.css");
     println!("cargo:rerun-if-changed=../frontend/app.js");
-    println!("cargo:rerun-if-changed=../data/services.json");
+    // services.json moved to crates/bigbox-config/data/ — its include_str! in
+    // that crate auto-tracks changes, so no rerun line is needed here.
     tauri_build::build()
 }

@@ -1,0 +1,51 @@
+[workspace]
+resolver = "2"
+members  = ["src-tauri", "crates/*"]
+
+# Single source of truth for external versions. Each member writes `dep.workspace = true`.
+[workspace.dependencies]
+serde      = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml       = "0.8"
+dirs       = "5"
+uuid       = { version = "1", features = ["v4", "serde"] }
+chrono     = { version = "0.4", features = ["serde"] }
+csv        = "1"
+rand       = "0.8"
+base64     = "0.22"
+tokio      = { version = "1", features = ["sync", "time", "rt", "macros"] }
+reqwest    = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+tauri      = { version = "2", features = ["devtools", "unstable"] }
+tauri-build = { version = "2", features = [] }
+
+# Internal crates (path deps, also versioned for future publish). Added as each
+# is extracted.
+bigbox-core          = { path = "crates/bigbox-core" }
+bigbox-driver-assets = { path = "crates/bigbox-driver-assets" }
+bigbox-config        = { path = "crates/bigbox-config" }
+bigbox-cloud         = { path = "crates/bigbox-cloud" }
+bigbox-contract      = { path = "crates/bigbox-contract" }
+bigbox-orchestrator  = { path = "crates/bigbox-orchestrator" }
+bigbox-shell         = { path = "crates/bigbox-shell" }
+bigbox-vorcaro       = { path = "crates/bigbox-vorcaro" }
+
+[workspace.package]
+version = "0.1.7"
+edition = "2021"
+license = "GPL-3.0-or-later"
+authors = ["Heitor Faria"]
+
+# MUST live in the workspace root — [patch] is workspace-global, not per-crate.
+# Patched wry: forces a WebView2 repaint on WM_SHOWWINDOW so a hidden->shown
+# service webview paints (Windows multiwebview). wry 0.54.4 + one-arm patch;
+# see github.com/podheitor/wry@bigbox-0.54.4.
+[patch.crates-io]
+wry = { git = "https://github.com/podheitor/wry", branch = "bigbox-0.54.4" }
+
+# Profiles are workspace-global. Keep release tuning here.
+[profile.release]
+opt-level     = 3
+lto           = true
+codegen-units = 1
+strip         = true
+panic         = "abort"

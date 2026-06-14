@@ -1,0 +1,7 @@
+# Pin the build output to src-tauri/target so every existing artifact path keeps
+# working after the workspace root was introduced. Without this, a workspace
+# would put outputs in the repo-root target/, breaking release.yml (×3 jobs),
+# PKGBUILD, and the Flathub manifest, which all reference src-tauri/target/...
+# See docs/WORKSPACE-REFACTOR-PLAN.md (DECISION 2026-06-14).
+[build]
+target-dir = "src-tauri/target"

@@ -5,35 +5,40 @@
 //!
 //! One `tokio` task per running campaign. The task:
 //!   1. Resolves recipients from `TargetSpec`.
-//!   2. For each recipient: fires `wv.eval("__vorcaro.sendTo(...)")` on the
-//!      matching chat-service WebView, awaits a `oneshot` reply from the
-//!      driver's `vorcaro_send_result` call.
-//!   3. Persists per-attempt progress and emits `vorcaro://campaign-progress`.
+//!   2. For each recipient: fires `__vorcaro.sendTo(...)` into the matching
+//!      chat-service WebView (via the `DriverTransport` port), awaits a
+//!      `oneshot` reply from the driver's `vorcaro_send_result` IPC call.
+//!   3. Persists per-attempt progress and emits campaign progress (via the
+//!      `ProgressSink` port).
 //!   4. Sleeps a randomized delay between sends.
 //!   5. Auto-pauses after N consecutive failures.
 //!   6. Honors daily-cap, pause/resume, and abort signals.
+//!
+//! This module names **no** `tauri` symbols — everything that would touch the
+//! UI or a webview goes out through `bigbox_contract` ports, which the Tauri
+//! layer implements.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use chrono::Utc;
-use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::{oneshot, Mutex as AsyncMutex, Notify};
 use uuid::Uuid;
 
-use super::model::{
+use bigbox_contract::{DriverTransport, ProgressSink};
+use bigbox_core::vorcaro::{
     Campaign, CampaignStatus, Contact, Platform, SendAttempt, SendStatus, TargetSpec,
+    TemplateUsage, VorcaroState,
 };
-use super::{persist_state, VorcaroStore};
 
 // ── Public types ────────────────────────────────────────────────
 
-/// What a driver's `sendTo` call ultimately resolves to.
-#[derive(Debug, Clone)]
-pub struct SendOutcome {
-    pub status: SendStatus,
-    pub error: Option<String>,
-}
+// SendOutcome moved to bigbox-core (shared with bigbox-cloud); re-exported so
+// `orchestrator::SendOutcome` paths keep working.
+pub use bigbox_core::vorcaro::SendOutcome;
+
+/// Shared in-memory store handle. The engine persists through `bigbox-config`.
+pub type SharedStore = Arc<Mutex<Option<VorcaroState>>>;
 
 /// Per-running-campaign control handle, stored in `CampaignRegistry`.
 pub struct CampaignControl {
@@ -55,10 +60,14 @@ pub struct OrchestratorState {
 
 /// Spawn the send loop for a campaign. Idempotent: if a campaign is already
 /// running with the same id, returns Err.
+///
+/// `transport` and `progress` are the injected ports — the Tauri layer builds
+/// them over `AppHandle` and hands them in here.
 pub async fn start(
-    app: AppHandle,
-    store: tauri::State<'_, VorcaroStore>,
-    orch: tauri::State<'_, OrchestratorState>,
+    orch: &OrchestratorState,
+    store: SharedStore,
+    transport: Arc<dyn DriverTransport>,
+    progress: Arc<dyn ProgressSink>,
     campaign_id: Uuid,
 ) -> Result<(), String> {
     {
@@ -79,13 +88,12 @@ pub async fn start(
 
     let attempts = orch.attempts.clone();
     let campaigns_map = orch.campaigns.clone();
-    let store_inner = store.inner_clone();
-    let app_handle = app.clone();
 
-    tauri::async_runtime::spawn(async move {
+    tokio::spawn(async move {
         let outcome = run_campaign(
-            app_handle.clone(),
-            store_inner,
+            transport,
+            progress.clone(),
+            store,
             attempts,
             campaign_id,
             status_h.clone(),
@@ -102,7 +110,7 @@ pub async fn start(
             Err(_) => CampaignStatus::Aborted,
         };
         emit_progress(
-            &app_handle,
+            &*progress,
             campaign_id,
             "campaign-finished",
             serde_json::json!({ "status": format!("{:?}", final_status).to_lowercase() }),
@@ -112,10 +120,7 @@ pub async fn start(
     Ok(())
 }
 
-pub async fn pause(
-    orch: tauri::State<'_, OrchestratorState>,
-    campaign_id: Uuid,
-) -> Result<(), String> {
+pub async fn pause(orch: &OrchestratorState, campaign_id: Uuid) -> Result<(), String> {
     let map = orch.campaigns.lock().await;
     let Some(ctrl) = map.get(&campaign_id) else {
         return Err("campanha não está rodando".into());
@@ -124,10 +129,7 @@ pub async fn pause(
     Ok(())
 }
 
-pub async fn resume(
-    orch: tauri::State<'_, OrchestratorState>,
-    campaign_id: Uuid,
-) -> Result<(), String> {
+pub async fn resume(orch: &OrchestratorState, campaign_id: Uuid) -> Result<(), String> {
     let map = orch.campaigns.lock().await;
     let Some(ctrl) = map.get(&campaign_id) else {
         return Err("campanha não está rodando".into());
@@ -137,10 +139,7 @@ pub async fn resume(
     Ok(())
 }
 
-pub async fn abort(
-    orch: tauri::State<'_, OrchestratorState>,
-    campaign_id: Uuid,
-) -> Result<(), String> {
+pub async fn abort(orch: &OrchestratorState, campaign_id: Uuid) -> Result<(), String> {
     let map = orch.campaigns.lock().await;
     let Some(ctrl) = map.get(&campaign_id) else {
         return Err("campanha não está rodando".into());
@@ -153,7 +152,7 @@ pub async fn abort(
 /// Driver inside the WebView calls this via IPC; we route the outcome back to
 /// the oneshot waiting in `run_campaign`.
 pub async fn route_send_result(
-    orch: tauri::State<'_, OrchestratorState>,
+    orch: &OrchestratorState,
     attempt_id: Uuid,
     outcome: SendOutcome,
 ) -> Result<(), String> {
@@ -170,8 +169,9 @@ pub async fn route_send_result(
 // ── Core loop ──────────────────────────────────────────────────
 
 async fn run_campaign(
-    app: AppHandle,
-    store: std::sync::Arc<std::sync::Mutex<Option<super::model::VorcaroState>>>,
+    transport: Arc<dyn DriverTransport>,
+    progress: Arc<dyn ProgressSink>,
+    store: SharedStore,
     attempts: AttemptRegistry,
     campaign_id: Uuid,
     status: Arc<AsyncMutex<CampaignStatus>>,
@@ -194,12 +194,12 @@ async fn run_campaign(
     let attachments_payload: Vec<serde_json::Value> = campaign
         .attachments
         .iter()
-        .filter_map(|p| match super::attachments::read_as_base64(p) {
+        .filter_map(|p| match crate::attachments::read_as_base64(p) {
             Ok((name, mime, b64)) => Some(serde_json::json!({
                 "name": name, "mime": mime, "b64": b64,
             })),
             Err(e) => {
-                emit_progress(&app, campaign_id, "attachment-error", serde_json::json!({
+                emit_progress(&*progress, campaign_id, "attachment-error", serde_json::json!({
                     "path": p.to_string_lossy(), "error": e,
                 }));
                 None
@@ -214,7 +214,7 @@ async fn run_campaign(
             let wait_dur = (when - now).to_std().unwrap_or(std::time::Duration::ZERO);
             update_campaign(&store, campaign_id, |c| c.status = CampaignStatus::Scheduled);
             persist(&store)?;
-            emit_progress(&app, campaign_id, "scheduled", serde_json::json!({
+            emit_progress(&*progress, campaign_id, "scheduled", serde_json::json!({
                 "scheduled_at": when.to_rfc3339(),
             }));
 
@@ -249,22 +249,20 @@ async fn run_campaign(
 
     for contact in recipients.iter() {
         // ── Resume-aware skip: terminal-success / over-budget? ─
-        let prior: Vec<&super::model::SendAttempt> = progress_so_far
+        let prior: Vec<&SendAttempt> = progress_so_far
             .iter()
             .filter(|a| a.contact_id == contact.id)
             .collect();
         let already_terminal = prior.iter().any(|a| matches!(
             a.status,
-            super::model::SendStatus::Sent
-                | super::model::SendStatus::InvalidNumber
-                | super::model::SendStatus::Skipped
+            SendStatus::Sent | SendStatus::InvalidNumber | SendStatus::Skipped
         ));
         if already_terminal {
             continue;
         }
         let prior_failures = prior
             .iter()
-            .filter(|a| matches!(a.status, super::model::SendStatus::Failed))
+            .filter(|a| matches!(a.status, SendStatus::Failed))
             .count() as u32;
         if prior_failures > settings.max_retries_per_recipient {
             // Already burned through the retry budget — leave as Failed, move on.
@@ -276,12 +274,12 @@ async fn run_campaign(
             let st = *status.lock().await;
             match st {
                 CampaignStatus::Aborted => {
-                    hide_overlay_for(&app, platform, campaign.workspace_id.as_deref());
+                    hide_overlay_for(&*transport, platform, campaign.workspace_id.as_deref());
                     finalize(&store, campaign_id, CampaignStatus::Aborted);
                     return Ok(());
                 }
                 CampaignStatus::Paused => {
-                    emit_progress(&app, campaign_id, "paused", serde_json::json!({}));
+                    emit_progress(&*progress, campaign_id, "paused", serde_json::json!({}));
                     wake.notified().await;
                     continue;
                 }
@@ -297,10 +295,10 @@ async fn run_campaign(
             used < s.settings.daily_cap_per_platform
         };
         if !cap_ok {
-            emit_progress(&app, campaign_id, "daily-cap-reached", serde_json::json!({
+            emit_progress(&*progress, campaign_id, "daily-cap-reached", serde_json::json!({
                 "platform": format!("{:?}", platform),
             }));
-            hide_overlay_for(&app, platform, campaign.workspace_id.as_deref());
+            hide_overlay_for(&*transport, platform, campaign.workspace_id.as_deref());
             finalize(&store, campaign_id, CampaignStatus::Paused);
             return Ok(());
         }
@@ -311,10 +309,8 @@ async fn run_campaign(
         if !matches!(platform, Platform::WhatsAppCloudApi) {
             let label = format!("svc-{}",
                 campaign.workspace_id.as_deref().unwrap_or(platform.service_id()));
-            if let Some(wv) = app.get_webview(&label) {
-                let _ = wv.eval("if(window.__vorcaro && window.__vorcaro.showCampaignOverlay) \
-                    window.__vorcaro.showCampaignOverlay();");
-            }
+            let _ = transport.eval(&label, "if(window.__vorcaro && window.__vorcaro.showCampaignOverlay) \
+                window.__vorcaro.showCampaignOverlay();");
         }
 
         let attempt_id = Uuid::new_v4();
@@ -322,7 +318,7 @@ async fn run_campaign(
             perform_send_cloud_api(contact, &campaign.body, campaign.template.as_ref()).await
         } else {
             perform_send(
-                &app,
+                &*transport,
                 &attempts,
                 platform,
                 campaign.workspace_id.as_deref(),
@@ -335,7 +331,7 @@ async fn run_campaign(
         };
 
         // Send done — unlock the tab for the delay window.
-        hide_overlay_for(&app, platform, campaign.workspace_id.as_deref());
+        hide_overlay_for(&*transport, platform, campaign.workspace_id.as_deref());
 
         // ── Record + emit ──────────────────────────────────────
         let attempt = SendAttempt {
@@ -350,7 +346,7 @@ async fn run_campaign(
             guard.as_mut().unwrap().daily_cap.increment(platform);
         }
         persist(&store)?;
-        emit_progress(&app, campaign_id, "attempt", serde_json::to_value(&attempt).unwrap());
+        emit_progress(&*progress, campaign_id, "attempt", serde_json::to_value(&attempt).unwrap());
 
         // ── Auto-pause after N consecutive failures ────────────
         match outcome.status {
@@ -358,10 +354,10 @@ async fn run_campaign(
             _ => consecutive_failures += 1,
         }
         if consecutive_failures >= settings.auto_pause_after_consecutive_failures.max(1) {
-            emit_progress(&app, campaign_id, "auto-paused", serde_json::json!({
+            emit_progress(&*progress, campaign_id, "auto-paused", serde_json::json!({
                 "consecutive_failures": consecutive_failures,
             }));
-            hide_overlay_for(&app, platform, campaign.workspace_id.as_deref());
+            hide_overlay_for(&*transport, platform, campaign.workspace_id.as_deref());
             finalize(&store, campaign_id, CampaignStatus::Paused);
             return Ok(());
         }
@@ -381,7 +377,7 @@ async fn run_campaign(
             let mut slept = 0u64;
             while slept < total_ms {
                 if matches!(*status.lock().await, CampaignStatus::Aborted) {
-                    hide_overlay_for(&app, platform, campaign.workspace_id.as_deref());
+                    hide_overlay_for(&*transport, platform, campaign.workspace_id.as_deref());
                     finalize(&store, campaign_id, CampaignStatus::Aborted);
                     return Ok(());
                 }
@@ -392,13 +388,13 @@ async fn run_campaign(
         }
     }
 
-    hide_overlay_for(&app, platform, campaign.workspace_id.as_deref());
+    hide_overlay_for(&*transport, platform, campaign.workspace_id.as_deref());
     finalize(&store, campaign_id, CampaignStatus::Done);
     Ok(())
 }
 
 async fn perform_send(
-    app: &AppHandle,
+    transport: &dyn DriverTransport,
     attempts: &AttemptRegistry,
     platform: Platform,
     workspace_id: Option<&str>,
@@ -413,12 +409,12 @@ async fn perform_send(
         Some(id) => format!("svc-{id}"),
         None => format!("svc-{}", platform.service_id()),
     };
-    let Some(wv) = app.get_webview(&label) else {
+    if !transport.webview_exists(&label) {
         return SendOutcome {
             status: SendStatus::Failed,
             error: Some(format!("{} não está aberto no BigBox", platform.service_id())),
         };
-    };
+    }
 
     // Pick the right handle. Cloud API never reaches this function — the
     // run_campaign loop dispatches to perform_send_cloud_api instead.
@@ -456,7 +452,7 @@ async fn perform_send(
         atts = attachments_json,
         expected = serde_json::to_string(&contact.display_name).unwrap(),
     );
-    if let Err(e) = wv.eval(&js) {
+    if let Err(e) = transport.eval(&label, &js) {
         attempts.lock().await.remove(&attempt_id);
         return SendOutcome {
             status: SendStatus::Failed,
@@ -491,21 +487,21 @@ async fn perform_send(
 async fn perform_send_cloud_api(
     contact: &Contact,
     body: &str,
-    template: Option<&super::model::TemplateUsage>,
+    template: Option<&TemplateUsage>,
 ) -> SendOutcome {
     // Cloud API addresses recipients by E.164-without-+. Cloud API IS Business,
     // so prefer the WA-Business field then fall back to personal.
     let Some(handle) = contact.whatsapp_business.as_deref().or(contact.whatsapp.as_deref()) else {
         return SendOutcome {
-            status: super::model::SendStatus::Skipped,
+            status: SendStatus::Skipped,
             error: Some("contato sem número WhatsApp".into()),
         };
     };
 
-    let cfg = super::cloud_api::load_config();
+    let cfg = bigbox_cloud::load_config();
     if !cfg.is_complete() {
         return SendOutcome {
-            status: super::model::SendStatus::Failed,
+            status: SendStatus::Failed,
             error: Some("credenciais Cloud API não configuradas".into()),
         };
     }
@@ -519,9 +515,9 @@ async fn perform_send_cloud_api(
             .iter()
             .map(|p| substitute_vars(p, contact))
             .collect();
-        super::cloud_api::send_template(&cfg, handle, &t.name, &t.language, &params).await
+        bigbox_cloud::send_template(&cfg, handle, &t.name, &t.language, &params).await
     } else {
-        super::cloud_api::send_text(&cfg, handle, &body_substituted).await
+        bigbox_cloud::send_text(&cfg, handle, &body_substituted).await
     }
 }
 
@@ -542,10 +538,7 @@ fn substitute_vars(body: &str, c: &Contact) -> String {
 
 // ── Helpers ─────────────────────────────────────────────────────
 
-pub fn resolve_targets(
-    s: &super::model::VorcaroState,
-    spec: &TargetSpec,
-) -> Vec<Contact> {
+pub fn resolve_targets(s: &VorcaroState, spec: &TargetSpec) -> Vec<Contact> {
     match spec {
         TargetSpec::List(list_id) => s
             .lists
@@ -571,11 +564,7 @@ pub fn resolve_targets(
     }
 }
 
-fn update_campaign<F: FnOnce(&mut Campaign)>(
-    store: &std::sync::Arc<std::sync::Mutex<Option<super::model::VorcaroState>>>,
-    campaign_id: Uuid,
-    f: F,
-) {
+fn update_campaign<F: FnOnce(&mut Campaign)>(store: &SharedStore, campaign_id: Uuid, f: F) {
     let mut guard = store.lock().unwrap();
     if let Some(s) = guard.as_mut() {
         if let Some(c) = s.campaigns.iter_mut().find(|c| c.id == campaign_id) {
@@ -584,11 +573,7 @@ fn update_campaign<F: FnOnce(&mut Campaign)>(
     }
 }
 
-fn finalize(
-    store: &std::sync::Arc<std::sync::Mutex<Option<super::model::VorcaroState>>>,
-    campaign_id: Uuid,
-    final_status: CampaignStatus,
-) {
+fn finalize(store: &SharedStore, campaign_id: Uuid, final_status: CampaignStatus) {
     update_campaign(store, campaign_id, |c| {
         c.status = final_status;
         if matches!(final_status, CampaignStatus::Done | CampaignStatus::Aborted) {
@@ -599,32 +584,28 @@ fn finalize(
 }
 
 /// Hide the chat-tab lockout overlay. Safe to call multiple times / when not present.
-fn hide_overlay_for(app: &AppHandle, platform: Platform, workspace_id: Option<&str>) {
+fn hide_overlay_for(transport: &dyn DriverTransport, platform: Platform, workspace_id: Option<&str>) {
     if matches!(platform, Platform::WhatsAppCloudApi) {
         return;
     }
     let label = format!("svc-{}", workspace_id.unwrap_or(platform.service_id()));
-    if let Some(wv) = app.get_webview(&label) {
-        let _ = wv.eval(
-            "if(window.__vorcaro && window.__vorcaro.hideCampaignOverlay) \
-                window.__vorcaro.hideCampaignOverlay();",
-        );
+    let _ = transport.eval(
+        &label,
+        "if(window.__vorcaro && window.__vorcaro.hideCampaignOverlay) \
+            window.__vorcaro.hideCampaignOverlay();",
+    );
+}
+
+/// Persist the in-memory store to disk through `bigbox-config`.
+fn persist(store: &SharedStore) -> Result<(), String> {
+    let guard = store.lock().unwrap();
+    if let Some(s) = guard.as_ref() {
+        bigbox_config::store::save(s)
+    } else {
+        Ok(())
     }
 }
 
-fn persist(
-    store: &std::sync::Arc<std::sync::Mutex<Option<super::model::VorcaroState>>>,
-) -> Result<(), String> {
-    persist_state(store)
-}
-
-fn emit_progress(app: &AppHandle, campaign_id: Uuid, kind: &str, payload: serde_json::Value) {
-    let _ = app.emit(
-        "vorcaro://campaign-progress",
-        serde_json::json!({
-            "campaign_id": campaign_id.to_string(),
-            "kind": kind,
-            "payload": payload,
-        }),
-    );
+fn emit_progress(progress: &dyn ProgressSink, campaign_id: Uuid, kind: &str, payload: serde_json::Value) {
+    progress.emit(campaign_id, kind, payload);
 }

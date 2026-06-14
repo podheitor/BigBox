@@ -1,0 +1,33 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2025 Heitor Faria
+
+//! Load/save AppConfig from ~/.config/bigbox/config.toml
+
+use std::path::PathBuf;
+
+pub use bigbox_core::config::{AppConfig, UserService};
+
+pub fn config_path() -> PathBuf {
+    dirs::config_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("bigbox")
+        .join("config.toml")
+}
+
+pub fn load() -> AppConfig {
+    let path = config_path();
+    if !path.exists() {
+        return AppConfig::default();
+    }
+    let text = std::fs::read_to_string(&path).unwrap_or_default();
+    toml::from_str(&text).unwrap_or_default()
+}
+
+pub fn save(cfg: &AppConfig) {
+    let path = config_path();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let text = toml::to_string_pretty(cfg).unwrap_or_default();
+    let _ = std::fs::write(&path, text);
+}

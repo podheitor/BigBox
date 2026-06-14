@@ -17,7 +17,7 @@ use std::io::Read;
 
 use uuid::Uuid;
 
-use super::model::{Contact, ContactSource};
+use bigbox_core::vorcaro::{Contact, ContactSource};
 
 #[derive(Debug, Default, serde::Serialize)]
 pub struct ImportReport {

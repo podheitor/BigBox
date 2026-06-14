@@ -1,0 +1,19 @@
+name: Architecture guard
+
+# Fails the build if `tauri` leaks into any inner (Tauri-free) crate. This keeps
+# the campaign engine and domain layers out of the Tauri/wry blast radius — the
+# whole point of the workspace split. See docs/WORKSPACE-REFACTOR-PLAN.md §7.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  no-tauri-in-inner-crates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Inner crates must be tauri-free
+        run: bash scripts/check-no-tauri.sh

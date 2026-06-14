@@ -1,31 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2025 Heitor Faria
 
-//! Vorcaro's Studio — Phase A: contacts, lists, tags, CSV import, settings.
-//!
-//! Sending, scraping, and the driver scripts arrive in Phase B–D. The IPC
-//! surface registered here matches the dev plan at
-//! `docs/VORCARO-STUDIO-PLAN.md`.
-
-pub mod attachments;
-pub mod cloud_api;
-pub mod csv_io;
-pub mod drivers;
-pub mod model;
-pub mod orchestrator;
-pub mod store;
+//! Vorcaro's Studio IPC commands + the engine port adapters. The crate-root
+//! submodules (`model`, `orchestrator`, `cloud_api`, …) are declared in
+//! `lib.rs`; this module references them through `crate::`.
 
 use std::sync::{Arc, Mutex};
 
 use tauri::{AppHandle, Emitter, Manager};
 use uuid::Uuid;
 
-use model::{
+use crate::{attachments, cloud_api, csv_io, orchestrator, store};
+use crate::model::{
     Campaign, CampaignStatus, Contact, ContactList, ContactSource, Platform, ScrapedChat,
     SendStatus, Settings, TargetSpec, TemplateUsage, VorcaroState,
 };
-use orchestrator::OrchestratorState;
-use cloud_api::{TemplateInfo, WhatsAppCloudConfig};
+use crate::orchestrator::OrchestratorState;
+use crate::cloud_api::{TemplateInfo, WhatsAppCloudConfig};
 
 /// In-memory cache of the persisted state. Cloneable via `inner_clone()` so the
 /// orchestrator can hold a long-lived handle without going through Tauri state.
@@ -73,6 +64,57 @@ pub fn persist_state(
     } else {
         Ok(())
     }
+}
+
+// ── Port adapters: bridge the Tauri-free engine to the live AppHandle ─────
+// These are the concrete implementations of the `bigbox-contract` ports. The
+// engine (bigbox-orchestrator) holds them as `Arc<dyn …>` and never names tauri.
+
+struct TauriTransport {
+    app: AppHandle,
+}
+
+impl bigbox_contract::DriverTransport for TauriTransport {
+    fn webview_exists(&self, label: &str) -> bool {
+        self.app.get_webview(label).is_some()
+    }
+
+    fn eval(&self, label: &str, js: &str) -> Result<(), String> {
+        match self.app.get_webview(label) {
+            Some(wv) => wv.eval(js).map_err(|e| e.to_string()),
+            None => Err(format!("'{label}' não está aberto")),
+        }
+    }
+}
+
+struct TauriProgress {
+    app: AppHandle,
+}
+
+impl bigbox_contract::ProgressSink for TauriProgress {
+    fn emit(&self, campaign_id: Uuid, kind: &str, payload: serde_json::Value) {
+        let _ = self.app.emit(
+            "vorcaro://campaign-progress",
+            serde_json::json!({
+                "campaign_id": campaign_id.to_string(),
+                "kind": kind,
+                "payload": payload,
+            }),
+        );
+    }
+}
+
+/// Build the engine ports over a live `AppHandle`.
+fn make_ports(
+    app: &AppHandle,
+) -> (
+    Arc<dyn bigbox_contract::DriverTransport>,
+    Arc<dyn bigbox_contract::ProgressSink>,
+) {
+    (
+        Arc::new(TauriTransport { app: app.clone() }),
+        Arc::new(TauriProgress { app: app.clone() }),
+    )
 }
 
 // ── IPC commands ────────────────────────────────────────────────
@@ -417,7 +459,7 @@ pub struct Workspace {
 /// the live `config::load()` snapshot so it stays in sync with the sidebar.
 #[tauri::command]
 pub fn vorcaro_list_workspaces() -> Vec<Workspace> {
-    let cfg = crate::config::load();
+    let cfg = bigbox_config::config::load();
     cfg.services
         .into_iter()
         .filter_map(|svc| {
@@ -610,7 +652,8 @@ pub async fn vorcaro_start_campaign(
         persist(s)
     })?;
 
-    orchestrator::start(app, store, orch, id).await?;
+    let (transport, progress) = make_ports(&app);
+    orchestrator::start(orch.inner(), store.inner_clone(), transport, progress, id).await?;
     Ok(id)
 }
 
@@ -644,7 +687,15 @@ pub fn rehydrate_on_boot(app: AppHandle) {
         tauri::async_runtime::spawn(async move {
             let store_state: tauri::State<'_, VorcaroStore> = app2.state();
             let orch_state: tauri::State<'_, OrchestratorState> = app2.state();
-            let _ = orchestrator::start(app2.clone(), store_state, orch_state, id).await;
+            let (transport, progress) = make_ports(&app2);
+            let _ = orchestrator::start(
+                orch_state.inner(),
+                store_state.inner_clone(),
+                transport,
+                progress,
+                id,
+            )
+            .await;
         });
     }
 }
@@ -654,7 +705,7 @@ pub async fn vorcaro_pause_campaign(
     orch: tauri::State<'_, OrchestratorState>,
     id: Uuid,
 ) -> Result<(), String> {
-    orchestrator::pause(orch, id).await
+    orchestrator::pause(orch.inner(), id).await
 }
 
 #[tauri::command]
@@ -669,7 +720,7 @@ pub async fn vorcaro_resume_campaign(
         let map = orch.campaigns.lock().await;
         if map.contains_key(&id) {
             drop(map);
-            return orchestrator::resume(orch, id).await;
+            return orchestrator::resume(orch.inner(), id).await;
         }
     }
     // Otherwise (e.g. auto-paused on cap/failures, or restarted), respawn the loop.
@@ -677,7 +728,8 @@ pub async fn vorcaro_resume_campaign(
     // safe: `resolve_targets` returns the full list and the loop re-sends from
     // index 0. For Phase C we keep it simple: resume == restart from scratch
     // unless the campaign is still in-memory.
-    orchestrator::start(app, store, orch, id).await
+    let (transport, progress) = make_ports(&app);
+    orchestrator::start(orch.inner(), store.inner_clone(), transport, progress, id).await
 }
 
 #[tauri::command]
@@ -685,7 +737,7 @@ pub async fn vorcaro_abort_campaign(
     orch: tauri::State<'_, OrchestratorState>,
     id: Uuid,
 ) -> Result<(), String> {
-    orchestrator::abort(orch, id).await
+    orchestrator::abort(orch.inner(), id).await
 }
 
 #[derive(serde::Deserialize)]
@@ -725,7 +777,7 @@ pub async fn vorcaro_send_result(
     error: Option<String>,
 ) -> Result<(), String> {
     orchestrator::route_send_result(
-        orch,
+        orch.inner(),
         attempt_id,
         orchestrator::SendOutcome {
             status: status.into(),

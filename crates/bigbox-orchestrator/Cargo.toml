@@ -1,0 +1,23 @@
+[package]
+name = "bigbox-orchestrator"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+# The campaign engine. The hot-edit crate. *** NO tauri *** — it talks out via
+# the port traits in bigbox-contract, implemented by bigbox-vorcaro.
+[dependencies]
+bigbox-contract.workspace = true
+bigbox-core.workspace = true
+bigbox-config.workspace = true
+bigbox-cloud.workspace = true
+tokio.workspace = true
+chrono.workspace = true
+csv.workspace = true
+base64.workspace = true
+rand.workspace = true
+uuid.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+dirs.workspace = true

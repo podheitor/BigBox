@@ -132,23 +132,107 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 name = "bigbox"
 version = "0.1.7"
 dependencies = [
- "base64 0.22.1",
- "cairo-rs",
- "chrono",
- "csv",
- "dirs 5.0.1",
- "gtk",
- "rand 0.8.5",
- "reqwest 0.12.28",
- "serde",
+ "bigbox-shell",
+ "bigbox-vorcaro",
  "serde_json",
  "tauri",
  "tauri-build",
- "tokio",
+]
+
+[[package]]
+name = "bigbox-cloud"
+version = "0.1.7"
+dependencies = [
+ "bigbox-core",
+ "dirs 5.0.1",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
  "toml 0.8.2",
+]
+
+[[package]]
+name = "bigbox-config"
+version = "0.1.7"
+dependencies = [
+ "bigbox-core",
+ "dirs 5.0.1",
+ "serde_json",
+ "toml 0.8.2",
+]
+
+[[package]]
+name = "bigbox-contract"
+version = "0.1.7"
+dependencies = [
+ "bigbox-core",
+ "serde_json",
  "uuid",
+]
+
+[[package]]
+name = "bigbox-core"
+version = "0.1.7"
+dependencies = [
+ "chrono",
+ "serde",
+ "uuid",
+]
+
+[[package]]
+name = "bigbox-driver-assets"
+version = "0.1.7"
+
+[[package]]
+name = "bigbox-orchestrator"
+version = "0.1.7"
+dependencies = [
+ "base64 0.22.1",
+ "bigbox-cloud",
+ "bigbox-config",
+ "bigbox-contract",
+ "bigbox-core",
+ "chrono",
+ "csv",
+ "dirs 5.0.1",
+ "rand 0.8.5",
+ "serde",
+ "serde_json",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "bigbox-shell"
+version = "0.1.7"
+dependencies = [
+ "bigbox-config",
+ "bigbox-core",
+ "bigbox-driver-assets",
+ "dirs 5.0.1",
+ "gtk",
+ "serde_json",
+ "tauri",
+ "tokio",
  "webkit2gtk",
  "zbus",
+]
+
+[[package]]
+name = "bigbox-vorcaro"
+version = "0.1.7"
+dependencies = [
+ "bigbox-cloud",
+ "bigbox-config",
+ "bigbox-contract",
+ "bigbox-core",
+ "bigbox-driver-assets",
+ "bigbox-orchestrator",
+ "chrono",
+ "serde",
+ "serde_json",
+ "tauri",
+ "uuid",
 ]
 
 [[package]]

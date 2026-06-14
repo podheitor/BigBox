@@ -1,0 +1,21 @@
+[package]
+name = "bigbox-vorcaro"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+# Tauri-edge crate: Vorcaro CRM/campaign IPC + the port adapters that bridge the
+# Tauri-free engine to AppHandle. Sibling of bigbox-shell (no dep between them).
+[dependencies]
+tauri.workspace = true
+uuid.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+bigbox-core.workspace = true
+bigbox-config.workspace = true
+bigbox-cloud.workspace = true
+bigbox-contract.workspace = true
+bigbox-orchestrator.workspace = true
+bigbox-driver-assets.workspace = true

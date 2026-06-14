@@ -1,0 +1,13 @@
+[package]
+name = "bigbox-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+# LEAF crate: the shared domain vocabulary. Keep it cheap.
+# serde/chrono/uuid ONLY. No tauri, no tokio, no reqwest, no toml, no dirs.
+[dependencies]
+serde.workspace = true
+chrono.workspace = true
+uuid.workspace = true

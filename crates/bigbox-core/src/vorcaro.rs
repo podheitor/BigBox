@@ -2,6 +2,7 @@
 // Copyright (C) 2025 Heitor Faria
 
 //! Vorcaro's Studio data model — contacts, lists, tags, campaigns, settings.
+//! Pure domain types; persistence (vorcaro.toml) lives in `bigbox-config`.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -116,6 +117,15 @@ pub enum SendStatus {
     Failed,
     Skipped,
     InvalidNumber,
+}
+
+/// What a driver's `sendTo` call (or a Cloud API send) ultimately resolves to.
+/// Shared by the orchestrator (engine) and the cloud sender; lives here so
+/// neither has to depend on the other.
+#[derive(Debug, Clone)]
+pub struct SendOutcome {
+    pub status: SendStatus,
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

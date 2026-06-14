@@ -1,0 +1,13 @@
+[package]
+name = "bigbox-config"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+# All on-disk persistence + the embedded services catalog.
+[dependencies]
+bigbox-core.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+dirs.workspace = true

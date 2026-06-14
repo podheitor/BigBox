@@ -1,0 +1,9 @@
+[package]
+name = "bigbox-driver-assets"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+# LEAF crate. No dependencies — just include_str! of assets/*.js.
+[dependencies]
