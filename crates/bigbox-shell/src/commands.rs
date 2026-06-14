@@ -27,6 +27,10 @@ pub struct AppState {
     pub active_view:   Mutex<Option<String>>,
     /// Unread badge counts keyed by WebView label (e.g. "svc-discord")
     pub badges:        Mutex<HashMap<String, u32>>,
+    /// Last-seen inbox unread count for email services, parsed from the page
+    /// title. Separate from `badges` so navigation away from the inbox (which
+    /// drops the title count) doesn't reset the new-mail baseline.
+    pub mail_counts:   Mutex<HashMap<String, u32>>,
     /// Per-service zoom level (1.0 = 100%). Persists for the session.
     pub zoom_levels:   Mutex<HashMap<String, f64>>,
 }
@@ -124,21 +128,29 @@ const BADGE_MONITOR_SCRIPT: &str = r#"
 (function(){
   const label = '__BADGE_LABEL__';
   function parse(t){
-    var m = t.match(/^\((\d+)\)/) || t.match(/^\[(\d+)\]/) || t.match(/^(\d+) /);
-    return m ? parseInt(m[1], 10) : 0;
+    // Count may sit at the start ("(3) WhatsApp") or mid-title
+    // ("Inbox (23,068) - you@gmail.com - Gmail"), and may carry thousands
+    // separators, so match anywhere and keep only the digits.
+    var m = t.match(/\(([\d.,\s]+)\)/) || t.match(/\[([\d.,\s]+)\]/) || t.match(/^(\d+) /);
+    if(!m) return 0;
+    var digits = m[1].replace(/[^\d]/g, '');
+    return digits ? parseInt(digits, 10) : 0;
   }
+  // Report only when the parsed count changes — NOT on every title change.
+  // Gmail rewrites its title constantly; reporting each one floods the host
+  // with IPC and destabilizes the webview into reload loops.
   var last = -1;
   function check(){
     var c = parse(document.title);
-    if(c !== last){
-      last = c;
+    if(c === last) return;
+    last = c;
+    var payload = {label: label, count: c, title: document.title};
+    try{
+      window.__TAURI__.core.invoke('update_badge', payload);
+    }catch(_){
       try{
-        window.__TAURI__.core.invoke('update_badge', {label: label, count: c});
-      }catch(_){
-        try{
-          window.__TAURI_INTERNALS__.invoke('update_badge', {label: label, count: c});
-        }catch(__){ }
-      }
+        window.__TAURI_INTERNALS__.invoke('update_badge', payload);
+      }catch(__){ }
     }
   }
   new MutationObserver(check)
@@ -1353,6 +1365,7 @@ pub fn update_badge(
     state: State<'_, AppState>,
     label: String,
     count: u32,
+    title: Option<String>,
 ) -> Result<(), String> {
     {
         let mut badges = state.badges.lock().unwrap();
@@ -1360,6 +1373,33 @@ pub fn update_badge(
         let has_any = badges.values().any(|&v| v > 0);
         refresh_tray_icon(&app, has_any);
     }
+
+    // New-mail detection for email services, driven off the raw page title
+    // rather than the generic badge `count` (Gmail formats its count with
+    // thousands separators — "Inbox (23,068)" — which the JS regex can't read,
+    // and the count is the full unread total, not "new since last seen").
+    //
+    // We only act when the title actually exposes an inbox count; non-inbox
+    // titles (a message subject, "Gmail", a different folder) parse to None and
+    // leave the baseline untouched, so flipping between the inbox and a message
+    // never looks like a flood of new mail.
+    if let Some((display_name, _stype)) = email_service(&label) {
+        if let Some(n) = title.as_deref().and_then(parse_mail_count) {
+            let base = { state.mail_counts.lock().unwrap().insert(label.clone(), n) };
+            if let Some(old) = base {
+                if n > old {
+                    let delta = n - old;
+                    let body = if delta == 1 {
+                        "1 new email".to_string()
+                    } else {
+                        format!("{delta} new emails")
+                    };
+                    notify_new_mail(&display_name, &body);
+                }
+            }
+        }
+    }
+
     app.emit("badge-update", serde_json::json!({ "label": label, "count": count }))
         .map_err(|e| e.to_string())?;
     Ok(())
@@ -1397,6 +1437,61 @@ pub fn refresh_tray_icon(_app: &AppHandle, has_notifications: bool) {
     }
     #[cfg(not(target_os = "linux"))]
     let _ = has_notifications;
+}
+
+/// Fire a desktop "new mail" toast for an email service. Off the IPC thread so
+/// a slow notification daemon never stalls badge updates.
+pub fn notify_new_mail(_title: &str, _body: &str) {
+    #[cfg(target_os = "linux")]
+    {
+        let title = _title.to_string();
+        let body = _body.to_string();
+        std::thread::spawn(move || {
+            if let Ok(rt) = tokio::runtime::Builder::new_current_thread().enable_all().build() {
+                let _ = rt.block_on(send_desktop_notification(title, body));
+            }
+        });
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = (_title, _body);
+}
+
+#[cfg(target_os = "linux")]
+async fn send_desktop_notification(
+    summary: String,
+    body:    String,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    use zbus::Connection;
+    use zbus::zvariant::Value;
+    use std::collections::HashMap;
+
+    let conn = Connection::session().await?;
+
+    // org.freedesktop.Notifications.Notify — the cross-desktop toast API
+    // (KDE's plasma-notify, GNOME, dunst, …). app_icon "bigbox" + the
+    // desktop-entry hint let the daemon attribute the toast to our app.
+    let actions: Vec<&str> = Vec::new();
+    let mut hints: HashMap<&str, Value> = HashMap::new();
+    hints.insert("desktop-entry", Value::new("bigbox"));
+
+    conn.call_method(
+        Some("org.freedesktop.Notifications"),
+        "/org/freedesktop/Notifications",
+        Some("org.freedesktop.Notifications"),
+        "Notify",
+        &(
+            "BigBox",            // app_name
+            0u32,                // replaces_id (0 = new toast)
+            "bigbox",            // app_icon
+            summary.as_str(),    // summary
+            body.as_str(),       // body
+            actions,             // actions
+            hints,               // hints
+            -1i32,               // expire_timeout (-1 = daemon default)
+        ),
+    ).await?;
+
+    Ok(())
 }
 
 #[cfg(target_os = "linux")]
@@ -1480,6 +1575,54 @@ pub fn bb_log(line: String) {
 
 fn svc_label(service_id: &str) -> String {
     format!("svc-{service_id}")
+}
+
+/// Service types that are webmail clients, where a rising unread count means
+/// "new mail arrived" and warrants a desktop notification.
+fn is_email_service(service_type: &str) -> bool {
+    matches!(service_type, "gmail" | "outlook" | "carbonio")
+}
+
+/// Resolve a WebView badge label (e.g. "svc-gmail") to its (display_name,
+/// service_type) — or None if the label isn't a configured email service.
+fn email_service(label: &str) -> Option<(String, String)> {
+    let id = label.strip_prefix("svc-")?;
+    let cfg = config::load();
+    let svc = cfg.services.iter().find(|s| s.id == id)?;
+    if !is_email_service(&svc.service_type) {
+        return None;
+    }
+    Some((svc.display_name.clone(), svc.service_type.clone()))
+}
+
+/// Extract the inbox unread count from a webmail page title, or None if the
+/// title doesn't expose one (a message subject, a non-inbox folder, etc.).
+///
+/// Matches a "(N)" group whose digits may carry thousands separators and which
+/// is immediately followed by " - " / " – " — the "Inbox (23,068) - account"
+/// layout webmail uses — so incidental parentheses in a subject line ("(GMT-3)",
+/// "(user@host)") don't get mistaken for a count.
+fn parse_mail_count(title: &str) -> Option<u32> {
+    let mut search_from = 0;
+    while let Some(open_rel) = title[search_from..].find('(') {
+        let open = search_from + open_rel;
+        let Some(close_rel) = title[open + 1..].find(')') else { break };
+        let close = open + 1 + close_rel;
+        let inside = &title[open + 1..close];
+        let after = &title[close + 1..];
+
+        let suffix_ok = after.starts_with(" - ") || after.starts_with(" – ");
+        let only_count_chars = !inside.is_empty()
+            && inside.chars().all(|c| c.is_ascii_digit() || matches!(c, ',' | '.' | ' '));
+        if suffix_ok && only_count_chars {
+            let digits: String = inside.chars().filter(char::is_ascii_digit).collect();
+            if let Ok(n) = digits.parse::<u32>() {
+                return Some(n);
+            }
+        }
+        search_from = close + 1;
+    }
+    None
 }
 
 /// True for the built-in Vorcaro's Studio panel and any future "local://"
