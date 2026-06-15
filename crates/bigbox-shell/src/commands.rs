@@ -248,6 +248,76 @@ const NOTIFICATION_GRANT_SCRIPT: &str = r#"
 })();
 "#;
 
+/// Carbonio new-mail driver. Carbonio's title carries no unread count and it
+/// fires its notification from a service worker (which WebKitGTK gives the host
+/// no way to intercept), so we poll the Inbox unread count ourselves and drive
+/// the sidebar badge (via `update_badge`) plus a toast on an increase.
+///
+/// Source of truth is Carbonio's own SOAP API — `GetFolderRequest` for folder
+/// id 2 (Inbox), authenticated by the session cookie. If that ever fails we fall
+/// back to scraping the folder tree ("Inbox14"). We poll every few seconds and
+/// only toast on a rise — reading mail (count drops) never notifies.
+const CARBONIO_DRIVER: &str = r#"
+(function(){
+  const label='__BADGE_LABEL__';
+  function invoke(c,a){ try{return window.__TAURI__.core.invoke(c,a);}
+    catch(_){ try{return window.__TAURI_INTERNALS__.invoke(c,a);}catch(__){} } }
+
+  // Preferred source: Carbonio's own SOAP API (folder id 2 = Inbox). Uses the
+  // session cookie (credentials:'include'); a read, so no CSRF needed. Returns
+  // the Inbox unread count, or null if the API isn't usable here.
+  function apiUnread(){
+    return fetch('/service/soap/GetFolderRequest', {
+      method:'POST', credentials:'include',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ Header:{context:{_jsns:'urn:zimbra'}},
+        Body:{ GetFolderRequest:{ _jsns:'urn:zimbraMail', folder:{ l:'2' } } } })
+    }).then(function(r){ return r.json(); }).then(function(j){
+      var f = j && j.Body && j.Body.GetFolderResponse && j.Body.GetFolderResponse.folder;
+      if(Array.isArray(f)) f=f[0];
+      return (f && typeof f.u==='number') ? f.u : (f ? (parseInt(f.u,10)||0) : null);
+    });
+  }
+
+  // Fallback: scrape the folder tree ("Inbox14" / "Inbox999+"). Less robust.
+  function domUnread(){
+    var items=document.querySelectorAll('[data-testid^="accordion-folder-item"]');
+    var total=0, found=false;
+    for(var i=0;i<items.length;i++){
+      var full=(items[i].textContent||'').trim();
+      if(full.indexOf('Inbox')!==0) continue;
+      found=true;
+      var m=full.slice(5).match(/^([\d.,]+)/);
+      total+=(m ? (parseInt(m[1].replace(/[^\d]/g,''),10)||0) : 0);
+    }
+    return found ? total : null;
+  }
+
+  var lastTotal=-1, useApi=true;
+  function report(total){
+    if(total==null || total===lastTotal) return;
+    if(lastTotal>=0 && total>lastTotal){
+      var d=total-lastTotal;
+      invoke('notify_mail',{summary:'Carbonio', body:(d===1?'1 new email':(d+' new emails'))});
+    }
+    lastTotal=total;
+    invoke('update_badge',{label:label, count:total, title:''});
+  }
+  function check(){
+    if(useApi){
+      apiUnread().then(function(u){
+        if(u==null){ useApi=false; report(domUnread()); }   // API unusable → DOM fallback
+        else report(u);
+      }).catch(function(){ useApi=false; report(domUnread()); });
+    } else {
+      report(domUnread());
+    }
+  }
+  setInterval(check, 5000);
+  setTimeout(check, 2500);
+})();
+"#;
+
 // WebKitGTK doesn't synthesize image File entries on the DOM `paste` event
 // from GTK clipboard image targets — WhatsApp/Telegram see e.clipboardData
 // with no items and silently drop the paste. We listen for paste events;
@@ -1160,6 +1230,14 @@ fn ensure_service_webview_created(
                 .initialization_script(CODEC_PROBE_SCRIPT);
         }
 
+        // Carbonio fires its new-mail notification from a service worker, which
+        // WebKitGTK gives the host no way to intercept. So instead we scrape the
+        // Inbox unread count from the folder tree and raise the toast ourselves.
+        if service_id == "carbonio" || service_id.starts_with("carbonio_") {
+            builder = builder
+                .initialization_script(&CARBONIO_DRIVER.replace("__BADGE_LABEL__", label));
+        }
+
         // UA override is a WebKitGTK accommodation; WebView2 uses its native UA.
         #[cfg(target_os = "linux")]
         if let Some(ua) = user_agent {
@@ -1403,6 +1481,14 @@ pub fn update_badge(
     app.emit("badge-update", serde_json::json!({ "label": label, "count": count }))
         .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// Raise a native new-mail toast on behalf of a scraping driver (Carbonio),
+/// which detects new mail from the DOM rather than the browser notification API.
+#[tauri::command]
+pub fn notify_mail(summary: String, body: String) {
+    let summary = if summary.trim().is_empty() { "New mail".to_string() } else { summary };
+    notify_new_mail(&summary, &body);
 }
 
 /// Clear badge count for a specific service (called from context menu "Mark all as read")
