@@ -38,6 +38,7 @@ pub fn run() {
             commands::open_about,
             commands::update_badge,
             commands::clear_badge,
+            commands::notify_mail,
             commands::show_service_menu,
             commands::bb_log,
             vorcaro::vorcaro_get_state,
