@@ -318,6 +318,42 @@ const CARBONIO_DRIVER: &str = r#"
 })();
 "#;
 
+/// Outlook new-mail driver. Outlook's title carries no count and it has no
+/// cookie-auth API we can call (it reads unread from token-auth Graph), so we
+/// read the Inbox unread from the folder list: the Inbox `role="treeitem"`
+/// renders its name + count + "unread" ("Caixa de Entrada88não lidas"). We take
+/// the count before that unread word, drive the badge, and toast on a rise.
+const OUTLOOK_DRIVER: &str = r#"
+(function(){
+  const label='__BADGE_LABEL__';
+  function invoke(c,a){ try{return window.__TAURI__.core.invoke(c,a);}
+    catch(_){ try{return window.__TAURI_INTERNALS__.invoke(c,a);}catch(__){} } }
+  function unread(){
+    var ti=document.querySelectorAll('[role="treeitem"]');
+    if(!ti.length) return null;                          // folder list not present
+    for(var i=0;i<ti.length;i++){
+      // "<count> unread" / "<count> não lidas" (".o lidas" dodges the ã encoding)
+      var m=(ti[i].textContent||'').match(/(\d[\d.,]*)\s*(?:unread|n.o lidas)/i);
+      if(m) return parseInt(m[1].replace(/[^\d]/g,''),10)||0;
+    }
+    return 0;                                            // list visible, none unread
+  }
+  var last=-1;
+  function check(){
+    var u=unread();
+    if(u==null || u===last) return;
+    if(last>=0 && u>last){
+      var d=u-last;
+      invoke('notify_mail',{summary:'Outlook', body:(d===1?'1 new email':(d+' new emails'))});
+    }
+    last=u;
+    invoke('update_badge',{label:label, count:u, title:''});
+  }
+  setInterval(check, 5000);
+  setTimeout(check, 3000);
+})();
+"#;
+
 // WebKitGTK doesn't synthesize image File entries on the DOM `paste` event
 // from GTK clipboard image targets — WhatsApp/Telegram see e.clipboardData
 // with no items and silently drop the paste. We listen for paste events;
@@ -1236,6 +1272,11 @@ fn ensure_service_webview_created(
         if service_id == "carbonio" || service_id.starts_with("carbonio_") {
             builder = builder
                 .initialization_script(&CARBONIO_DRIVER.replace("__BADGE_LABEL__", label));
+        }
+
+        if service_id == "outlook" || service_id.starts_with("outlook_") {
+            builder = builder
+                .initialization_script(&OUTLOOK_DRIVER.replace("__BADGE_LABEL__", label));
         }
 
         // UA override is a WebKitGTK accommodation; WebView2 uses its native UA.
