@@ -25,6 +25,7 @@ async fn main() {
 
     let mut threads = std::collections::HashSet::new();
     let mut incoming = 0;
+    let mut unread = 0u32;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
     loop {
         tokio::select! {
@@ -33,6 +34,7 @@ async fn main() {
                 Event::Conversations(c) => for conv in c { threads.insert(conv.thread_id); },
                 Event::Thread { thread_id, .. } => { threads.insert(thread_id); }
                 Event::Incoming(_) => incoming += 1,
+                Event::Unread(n) => unread = n,
                 Event::DeviceUpdated(d) => println!("  DeviceUpdated: {} (paired={}, reachable={})",
                     d.name, d.paired, d.reachable),
                 Event::PairingRequest { name, .. } => println!("  PairingRequest from {name}"),
@@ -40,5 +42,6 @@ async fn main() {
             _ = tokio::time::sleep_until(deadline) => break,
         }
     }
-    println!("== RESULT: {} conversations parsed, {} incoming ==", threads.len(), incoming);
+    println!("== RESULT: {} conversations parsed, {} incoming, {} unread ==",
+        threads.len(), incoming, unread);
 }

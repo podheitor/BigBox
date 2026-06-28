@@ -1586,27 +1586,28 @@ pub fn sms_unpair(kc: State<'_, KdeConnectHandle>, device_id: String) -> bool {
     kc.unpair(&device_id)
 }
 
-/// Raise a new-SMS toast and bump the sidebar/tray badge for the SMS pane.
-/// Called from the engine event loop on an inbound message. Reuses the same
-/// notification + badge machinery as new-mail.
-pub fn raise_sms_notification(app: &AppHandle, sender: &str, body: &str) {
+/// Raise a new-SMS desktop toast (reuses the new-mail notification path). The
+/// badge count is driven separately by [`set_sms_badge`] from the engine's
+/// real unread count.
+pub fn raise_sms_notification(sender: &str, body: &str) {
     let summary = if sender.trim().is_empty() {
         "New SMS".to_string()
     } else {
         sender.to_string()
     };
     notify_new_mail(&summary, body);
+}
 
+/// Set the SMS sidebar/tray badge to the real unread-conversation count.
+pub fn set_sms_badge(app: &AppHandle, count: u32) {
     let state: State<'_, AppState> = app.state();
     let label = svc_label("sms");
-    let count = {
+    {
         let mut badges = state.badges.lock().unwrap();
-        let n = badges.get(&label).copied().unwrap_or(0) + 1;
-        badges.insert(label.clone(), n);
+        badges.insert(label.clone(), count);
         let has_any = badges.values().any(|&v| v > 0);
         refresh_tray_icon(app, has_any);
-        n
-    };
+    }
     let _ = app.emit("badge-update", serde_json::json!({ "label": label, "count": count }));
 }
 
@@ -1662,8 +1663,11 @@ pub fn start_sms(app: AppHandle) {
                         .first()
                         .map(|a| a.display_name.clone().unwrap_or_else(|| a.address.clone()))
                         .unwrap_or_default();
-                    raise_sms_notification(&app2, &sender, &msg.body);
+                    raise_sms_notification(&sender, &msg.body);
                     let _ = app2.emit("sms-received", msg);
+                }
+                Event::Unread(count) => {
+                    set_sms_badge(&app2, count);
                 }
                 Event::DeviceUpdated(dev) => {
                     let _ = app2.emit("sms-device", dev);

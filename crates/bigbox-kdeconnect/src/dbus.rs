@@ -102,6 +102,21 @@ struct State {
     requested: std::collections::HashSet<i64>,
     /// Path we have already subscribed conversation signals on.
     subscribed: Option<String>,
+    /// Last emitted unread-conversation count, to avoid redundant badge events.
+    last_unread: Option<u32>,
+}
+
+/// Number of conversations whose latest message is inbound and unread.
+fn compute_unread(threads: &HashMap<i64, Vec<SmsMessage>>) -> u32 {
+    threads
+        .values()
+        .filter(|msgs| {
+            msgs.iter()
+                .max_by_key(|m| m.date)
+                .map(|m| !m.from_me && !m.read)
+                .unwrap_or(false)
+        })
+        .count() as u32
 }
 
 struct Inner {
@@ -495,7 +510,7 @@ async fn loader_worker(inner: Arc<Inner>, mut rx: mpsc::UnboundedReceiver<i64>) 
 fn handle_msg(inner: &Arc<Inner>, owned: OwnedValue) {
     let Some(m) = parse_message(&owned) else { return };
 
-    let (row, thread_snapshot, notify) = {
+    let (row, thread_snapshot, notify, unread) = {
         let mut st = inner.state.lock().unwrap();
 
         let entry = st.threads.entry(m.thread_id).or_default();
@@ -519,7 +534,17 @@ fn handle_msg(inner: &Arc<Inner>, owned: OwnedValue) {
         // BigBox started. Historical messages (the initial bulk load) have a
         // date before start, so they never toast.
         let notify = !m.from_me && !dup && m.date > inner.started_ms;
-        (row, thread_snapshot, notify)
+
+        // Recompute the unread badge; only surface it when it actually changed.
+        let count = compute_unread(&st.threads);
+        let unread = if st.last_unread != Some(count) {
+            st.last_unread = Some(count);
+            Some(count)
+        } else {
+            None
+        };
+
+        (row, thread_snapshot, notify, unread)
     };
 
     if let Some(r) = row {
@@ -530,6 +555,9 @@ fn handle_msg(inner: &Arc<Inner>, owned: OwnedValue) {
     }
     if notify {
         inner.emit(Event::Incoming(m));
+    }
+    if let Some(count) = unread {
+        inner.emit(Event::Unread(count));
     }
 }
 

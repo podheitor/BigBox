@@ -67,8 +67,11 @@ pub enum Event {
         thread_id: i64,
         messages: Vec<SmsMessage>,
     },
-    /// A freshly-arrived inbound message (drives the toast + badge).
+    /// A freshly-arrived inbound message (drives the desktop toast).
     Incoming(SmsMessage),
+    /// Current number of conversations with unread inbound messages (the
+    /// sidebar/tray badge count).
+    Unread(u32),
     /// A device's discovery / pairing / reachability state changed.
     DeviceUpdated(PairedDevice),
     /// The phone asked to pair; the user must accept in the pane.
