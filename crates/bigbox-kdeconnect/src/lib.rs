@@ -15,6 +15,7 @@
 //! The shell calls [`new`] once, manages the [`KdeConnectHandle`] for the IPC
 //! commands, spawns [`Engine::run`], and forwards the [`Event`] stream.
 
+pub mod contacts;
 pub mod identity;
 pub mod packet;
 pub mod sms;
@@ -33,7 +34,7 @@ pub mod store;
 #[cfg(not(target_os = "linux"))]
 pub mod tls;
 
-pub use bigbox_core::sms::{Conversation, PairedDevice, SmsAddress, SmsMessage};
+pub use bigbox_core::sms::{Contact, Conversation, PairedDevice, SmsAddress, SmsMessage};
 
 use std::io;
 use std::path::PathBuf;
@@ -82,6 +83,8 @@ pub enum Event {
 /// Methods are fire-and-forget — results return asynchronously as [`Event`]s.
 pub(crate) trait SmsBackend: Send + Sync {
     fn devices(&self) -> Vec<PairedDevice>;
+    /// Contacts (name/numbers/photo) for resolving numbers to names.
+    fn contacts(&self) -> Vec<Contact>;
     fn list_conversations(&self) -> bool;
     fn load_thread(&self, thread_id: i64) -> bool;
     fn send_sms(&self, addresses: Vec<String>, body: String) -> bool;
@@ -99,6 +102,9 @@ pub struct KdeConnectHandle {
 impl KdeConnectHandle {
     pub fn devices(&self) -> Vec<PairedDevice> {
         self.inner.devices()
+    }
+    pub fn contacts(&self) -> Vec<Contact> {
+        self.inner.contacts()
     }
     pub fn list_conversations(&self) -> bool {
         self.inner.list_conversations()
@@ -254,6 +260,10 @@ mod native {
     impl SmsBackend for EngineInner {
         fn devices(&self) -> Vec<PairedDevice> {
             self.snapshot_devices()
+        }
+        // The native peer doesn't sync contacts yet (no KDE vCard cache).
+        fn contacts(&self) -> Vec<Contact> {
+            Vec::new()
         }
         fn list_conversations(&self) -> bool {
             match self.active_device() {

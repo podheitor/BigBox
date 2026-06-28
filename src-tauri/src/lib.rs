@@ -42,6 +42,7 @@ pub fn run() {
             commands::show_service_menu,
             commands::bb_log,
             commands::sms_devices,
+            commands::sms_contacts,
             commands::sms_list_conversations,
             commands::sms_load_thread,
             commands::sms_send,

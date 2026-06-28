@@ -52,6 +52,20 @@ pub struct SmsMessage {
     pub attachment_count: u32,
 }
 
+/// A phone contact resolved from the KDE Connect contacts cache (vCards), used
+/// to show names + photos instead of bare numbers.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Contact {
+    pub name: String,
+    /// All phone numbers on the contact (raw, as stored — matched after
+    /// normalizing to digits on both sides).
+    pub numbers: Vec<String>,
+    /// Avatar as a `data:` URI, if the vCard carried a photo.
+    #[serde(default)]
+    pub photo: Option<String>,
+}
+
 /// One row in the conversation list: a thread plus its latest-message preview.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

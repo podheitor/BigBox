@@ -16,7 +16,7 @@ use tauri::{LogicalPosition, LogicalSize};
 use bigbox_config::config::{self, AppConfig, UserService};
 use bigbox_config::services::{self, ServiceDef};
 use bigbox_core::layout::{SIDEBAR_W, TITLEBAR_H};
-use bigbox_kdeconnect::{KdeConnectHandle, PairedDevice};
+use bigbox_kdeconnect::{Contact, KdeConnectHandle, PairedDevice};
 
 // ── Shared state ─────────────────────────────────────────────────
 
@@ -1548,6 +1548,12 @@ pub fn notify_mail(summary: String, body: String) {
 #[tauri::command]
 pub fn sms_devices(kc: State<'_, KdeConnectHandle>) -> Vec<PairedDevice> {
     kc.devices()
+}
+
+/// Phone contacts (name/numbers/photo) for resolving SMS numbers to names.
+#[tauri::command]
+pub fn sms_contacts(kc: State<'_, KdeConnectHandle>) -> Vec<Contact> {
+    kc.contacts()
 }
 
 /// Ask the active device for its conversation list.
