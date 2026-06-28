@@ -16,6 +16,7 @@ use tauri::{LogicalPosition, LogicalSize};
 use bigbox_config::config::{self, AppConfig, UserService};
 use bigbox_config::services::{self, ServiceDef};
 use bigbox_core::layout::{SIDEBAR_W, TITLEBAR_H};
+use bigbox_kdeconnect::{KdeConnectHandle, PairedDevice};
 
 // ── Shared state ─────────────────────────────────────────────────
 
@@ -1216,7 +1217,13 @@ fn ensure_service_webview_created(
     // injection scripts, no UA override. Treated like any other sidebar service
     // for sizing/visibility purposes but loaded from frontend/vorcaro/index.html.
     if is_vorcaro_panel(service_id) {
-        return create_vorcaro_panel(app, state, &window, label, session_dir);
+        return create_local_panel(app, state, &window, label, "vorcaro/index.html", session_dir);
+    }
+
+    // The SMS pane is another local HTML panel (frontend/sms/index.html), driven
+    // by the native KDE Connect peer rather than a web URL.
+    if is_sms_panel(service_id) {
+        return create_local_panel(app, state, &window, label, "sms/index.html", session_dir);
     }
 
     // ── Windows: pre-created at boot; this is the rare runtime fallback ─────
@@ -1532,6 +1539,146 @@ pub fn notify_mail(summary: String, body: String) {
     notify_new_mail(&summary, &body);
 }
 
+// ── SMS (native KDE Connect peer) ────────────────────────────────
+// The pane drives these over IPC; replies arrive as Tauri events
+// (sms-conversations / sms-thread / sms-received / sms-device / sms-pairing-
+// request) emitted by the engine event-forwarding loop in the app crate.
+
+/// Phones BigBox has discovered and/or paired with.
+#[tauri::command]
+pub fn sms_devices(kc: State<'_, KdeConnectHandle>) -> Vec<PairedDevice> {
+    kc.devices()
+}
+
+/// Ask the active device for its conversation list.
+#[tauri::command]
+pub fn sms_list_conversations(kc: State<'_, KdeConnectHandle>) -> bool {
+    kc.list_conversations()
+}
+
+/// Ask the active device for the full history of one thread.
+#[tauri::command]
+pub fn sms_load_thread(kc: State<'_, KdeConnectHandle>, thread_id: i64) -> bool {
+    kc.load_thread(thread_id)
+}
+
+/// Send an SMS to one or more addresses via the active device.
+#[tauri::command]
+pub fn sms_send(kc: State<'_, KdeConnectHandle>, addresses: Vec<String>, body: String) -> bool {
+    kc.send_sms(addresses, body)
+}
+
+/// Begin pairing with a discovered device (accept on the phone).
+#[tauri::command]
+pub fn sms_request_pair(kc: State<'_, KdeConnectHandle>, device_id: String) -> bool {
+    kc.request_pair(&device_id)
+}
+
+/// Accept a pairing request the phone initiated.
+#[tauri::command]
+pub fn sms_accept_pair(kc: State<'_, KdeConnectHandle>, device_id: String) -> bool {
+    kc.accept_pair(&device_id)
+}
+
+/// Forget a paired device.
+#[tauri::command]
+pub fn sms_unpair(kc: State<'_, KdeConnectHandle>, device_id: String) -> bool {
+    kc.unpair(&device_id)
+}
+
+/// Raise a new-SMS toast and bump the sidebar/tray badge for the SMS pane.
+/// Called from the engine event loop on an inbound message. Reuses the same
+/// notification + badge machinery as new-mail.
+pub fn raise_sms_notification(app: &AppHandle, sender: &str, body: &str) {
+    let summary = if sender.trim().is_empty() {
+        "New SMS".to_string()
+    } else {
+        sender.to_string()
+    };
+    notify_new_mail(&summary, body);
+
+    let state: State<'_, AppState> = app.state();
+    let label = svc_label("sms");
+    let count = {
+        let mut badges = state.badges.lock().unwrap();
+        let n = badges.get(&label).copied().unwrap_or(0) + 1;
+        badges.insert(label.clone(), n);
+        let has_any = badges.values().any(|&v| v > 0);
+        refresh_tray_icon(app, has_any);
+        n
+    };
+    let _ = app.emit("badge-update", serde_json::json!({ "label": label, "count": count }));
+}
+
+/// Boot the KDE Connect peer: build the engine, manage its handle for the IPC
+/// commands, run discovery/links, and forward engine events to the SMS pane.
+/// Called once from the app's `setup`. Safe to call even if no phone is present.
+pub fn start_sms(app: AppHandle) {
+    use bigbox_kdeconnect::{self as kc, Config, Event};
+
+    let base = config::config_path()
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    let device_name = std::env::var("HOSTNAME")
+        .or_else(|_| std::env::var("COMPUTERNAME"))
+        .unwrap_or_else(|_| "BigBox".to_string());
+    // Only used to seed the cert on first run; later boots reuse the persisted id.
+    let device_id = format!(
+        "bigbox_{:x}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    );
+
+    let cfg = Config { device_id, device_name, config_dir: base };
+    let (handle, mut rx, engine) = match kc::new(cfg) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("[bigbox] KDE Connect init failed: {e}");
+            return;
+        }
+    };
+    app.manage(handle);
+    tauri::async_runtime::spawn(engine.run());
+
+    let app2 = app.clone();
+    tauri::async_runtime::spawn(async move {
+        while let Some(ev) = rx.recv().await {
+            match ev {
+                Event::Conversations(list) => {
+                    let _ = app2.emit("sms-conversations", list);
+                }
+                Event::Thread { thread_id, messages } => {
+                    let _ = app2.emit(
+                        "sms-thread",
+                        serde_json::json!({ "threadId": thread_id, "messages": messages }),
+                    );
+                }
+                Event::Incoming(msg) => {
+                    let sender = msg
+                        .addresses
+                        .first()
+                        .map(|a| a.display_name.clone().unwrap_or_else(|| a.address.clone()))
+                        .unwrap_or_default();
+                    raise_sms_notification(&app2, &sender, &msg.body);
+                    let _ = app2.emit("sms-received", msg);
+                }
+                Event::DeviceUpdated(dev) => {
+                    let _ = app2.emit("sms-device", dev);
+                }
+                Event::PairingRequest { device_id, name } => {
+                    let _ = app2.emit(
+                        "sms-pairing-request",
+                        serde_json::json!({ "deviceId": device_id, "name": name }),
+                    );
+                }
+            }
+        }
+    });
+}
+
 /// Clear badge count for a specific service (called from context menu "Mark all as read")
 #[tauri::command]
 pub fn clear_badge(
@@ -1758,6 +1905,12 @@ fn is_vorcaro_panel(service_id: &str) -> bool {
     service_id == "vorcaro" || service_id.starts_with("vorcaro_")
 }
 
+/// True for the built-in SMS panel (native KDE Connect peer, not a web URL).
+/// The frontend catalog uses `id = "sms"`.
+fn is_sms_panel(service_id: &str) -> bool {
+    service_id == "sms" || service_id.starts_with("sms_")
+}
+
 /// Service ids that host a WhatsApp Web view we can scrape from.
 /// Covers personal + Business plus user-renamed multi-instances.
 pub(crate) fn is_whatsapp_service(service_id: &str) -> bool {
@@ -1770,18 +1923,20 @@ pub(crate) fn is_telegram_service(service_id: &str) -> bool {
     service_id == "telegram" || service_id.starts_with("telegram_")
 }
 
-/// Create Vorcaro's Studio as a local-asset WebView (frontend/vorcaro/index.html).
-/// No chat-service injection scripts, no UA override, no badge monitor.
-fn create_vorcaro_panel(
+/// Create a built-in local-asset panel (Vorcaro's Studio, the SMS pane, …) from
+/// a bundled frontend HTML file. No chat-service injection scripts, no UA
+/// override, no badge monitor — these panels talk to Rust over IPC.
+fn create_local_panel(
     app: &AppHandle,
     state: &State<'_, AppState>,
     window: &tauri::Window,
     label: &str,
+    asset: &str,
     session_dir: std::path::PathBuf,
 ) -> Result<(), String> {
     let builder = WebviewBuilder::new(
         label,
-        WebviewUrl::App("vorcaro/index.html".into()),
+        WebviewUrl::App(asset.into()),
     )
     .data_directory(session_dir);
 

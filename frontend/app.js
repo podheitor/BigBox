@@ -197,13 +197,46 @@ async function initTitlebar() {
   document.getElementById('btn-close').addEventListener('click', () => win.close());
 }
 
+// service_type → icon file in frontend/icons/ (white glyph on the colored
+// avatar). Services not listed fall back to their name's first letter.
+const SERVICE_ICONS = {
+    whatsapp: 'whatsapp', whatsapp_business: 'whatsapp', telegram: 'telegram',
+    gmail: 'gmail', outlook: 'outlook', carbonio: 'carbonio', sms: 'sms',
+    vorcaro: 'vorcaro', google_calendar: 'google_calendar',
+    google_drive: 'google_drive', slack: 'slack', discord: 'discord',
+    notion: 'notion', github: 'github', youtube: 'youtube',
+    spotify: 'spotify', trello: 'trello',
+};
+
+// Full-color brand logos on a white circle — reserved, currently unused (every
+// service uses the consistent white-glyph style above).
+const SERVICE_COLOR_ICONS = {};
+
+// Build a service avatar (`cls` = avatar | catalog-avatar): a white brand glyph
+// (or full-color logo) on the brand-colored circle, falling back to the first
+// letter. Shared by the sidebar, the catalog grid, and the active list.
+function avatarMarkup(serviceType, displayName, color, cls) {
+    const glyphIcon = SERVICE_ICONS[serviceType];
+    const colorIcon = SERVICE_COLOR_ICONS[serviceType];
+    let bg = color || '#6c7086';
+    let inner;
+    if (colorIcon) {
+        bg = '#fff';
+        inner = `<img class="logo" src="icons/color/${colorIcon}.svg" alt="">`;
+    } else if (glyphIcon) {
+        inner = `<span class="glyph" style="-webkit-mask-image:url('icons/${glyphIcon}.svg');mask-image:url('icons/${glyphIcon}.svg')"></span>`;
+    } else {
+        inner = ((displayName || '?')[0] || '?').toUpperCase();
+    }
+    return `<span class="${cls}" style="background:${bg}">${inner}</span>`;
+}
+
 function renderSidebar() {
     const list = document.getElementById('service-list');
     list.innerHTML = '';
     config.services.forEach(svc => {
         const def   = catalog.find(c => c.id === svc.service_type) || {};
         const color = def.color || '#6c7086';
-        const init  = (svc.display_name[0] || '?').toUpperCase();
 
         const li = document.createElement('li');
         li.className = 'service-item';
@@ -215,7 +248,7 @@ function renderSidebar() {
         const badgeCount = badges[label] || 0;
         li.innerHTML = `
           <div class="service-btn" role="button" tabindex="0" title="${svc.display_name}">
-            <span class="avatar" style="background:${color}">${init}</span>
+            ${avatarMarkup(svc.service_type, svc.display_name, color, 'avatar')}
             <span class="badge${badgeCount > 0 ? ' visible' : ''}" data-label="${label}">
               ${badgeCount > 99 ? '99+' : badgeCount}
             </span>
@@ -347,9 +380,8 @@ function renderCatalog() {
     catalog.forEach(def => {
         const btn = document.createElement('button');
         btn.className = 'catalog-item';
-        const initial = def.name ? def.name[0] : '?';
         btn.innerHTML = `
-          <span class="catalog-avatar" style="background:${def.color}">${initial}</span>
+          ${avatarMarkup(def.id, def.name, def.color, 'catalog-avatar')}
           <span>${def.name}</span>`;
         btn.addEventListener('click', () => addService(def));
         grid.appendChild(btn);
@@ -362,12 +394,11 @@ function renderActiveList() {
     config.services.forEach(svc => {
         const def   = catalog.find(c => c.id === svc.service_type) || {};
         const color = def.color || '#6c7086';
-        const init  = (svc.display_name[0] || '?').toUpperCase();
 
         const li = document.createElement('li');
         li.className = 'active-item';
         li.innerHTML = `
-          <span class="avatar" style="background:${color}">${init}</span>
+          ${avatarMarkup(svc.service_type, svc.display_name, color, 'avatar')}
           <span class="svc-name">${svc.display_name}</span>
           <button class="remove-btn" title="Remove">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">

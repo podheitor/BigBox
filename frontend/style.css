@@ -228,6 +228,29 @@ body {
   flex-shrink: 0;
 }
 
+/* White brand glyph masked onto the colored avatar circle (falls back to the
+   letter when a service has no icon file). */
+.avatar .glyph,
+.catalog-avatar .glyph {
+  width: 22px;
+  height: 22px;
+  background-color: #fff;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+}
+
+/* Full-color brand logo on a white avatar circle. */
+.avatar .logo,
+.catalog-avatar .logo {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+}
+
 /* ── Sidebar footer (controls at bottom) ─────────────── */
 .sidebar-footer {
   width: 100%;

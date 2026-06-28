@@ -1,0 +1,31 @@
+[package]
+name = "bigbox-kdeconnect"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+# KDE Connect SMS backend, split per-OS behind one KdeConnectHandle:
+#   • Linux: talk to the running system kdeconnectd over D-Bus (it already owns
+#     port 1716 and the phone pairing on KDE desktops).
+#   • Windows/other: a from-scratch native peer (LAN discovery + mTLS + pairing).
+# NO tauri (the shell drives it over a channel + event stream).
+[dependencies]
+bigbox-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["net", "io-util", "rt-multi-thread"] }
+dirs.workspace = true
+
+# Linux backend: D-Bus client to the system kdeconnectd.
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus = { version = "5", default-features = false, features = ["tokio"] }
+futures-util = "0.3"
+
+# Native-peer backend (non-Linux): self-signed cert + mTLS over TCP.
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+rustls.workspace = true
+tokio-rustls.workspace = true
+rustls-pemfile.workspace = true
+rcgen.workspace = true
+sha2.workspace = true

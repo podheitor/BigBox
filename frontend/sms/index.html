@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Phone SMS</title>
+  <link rel="stylesheet" href="sms.css">
+</head>
+<body>
+  <!-- Pairing overlay: shown until a device is paired -->
+  <div id="pairing" class="overlay hidden">
+    <div class="pairing-card">
+      <div class="pairing-icon">📱</div>
+      <h1>Connect your phone</h1>
+      <p class="muted">
+        Install <strong>KDE Connect</strong> on your Android phone, put it on the
+        same Wi-Fi as this computer, then pair below. SMS/MMS only — Android only.
+      </p>
+      <div id="device-list" class="device-list">
+        <p class="muted searching">Searching for phones on your network…</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main two-pane SMS view -->
+  <div id="app" class="sms-app">
+    <aside class="convo-pane">
+      <header class="pane-header">
+        <h1>Messages</h1>
+        <span id="device-pill" class="device-pill" title="Connected device"></span>
+      </header>
+      <div id="convo-list" class="convo-list"></div>
+    </aside>
+
+    <div id="resizer" class="resizer" title="Drag to resize"></div>
+
+    <section class="thread-pane">
+      <header id="thread-header" class="thread-header hidden">
+        <button id="back-btn" class="icon-btn" title="Back">←</button>
+        <div class="thread-who">
+          <span id="thread-name" class="thread-name"></span>
+          <span id="thread-addr" class="thread-addr muted"></span>
+        </div>
+      </header>
+
+      <div id="thread-empty" class="thread-empty">
+        <div class="thread-empty-inner">
+          <div class="thread-empty-icon">💬</div>
+          <p class="muted">Select a conversation</p>
+        </div>
+      </div>
+
+      <div id="messages" class="messages hidden"></div>
+
+      <footer id="composer" class="composer hidden">
+        <textarea id="compose-input" rows="1" placeholder="Type a message…"></textarea>
+        <button id="send-btn" class="send-btn" title="Send">➤</button>
+      </footer>
+    </section>
+  </div>
+
+  <!-- Toast for an incoming pairing request -->
+  <div id="pair-request" class="pair-request hidden">
+    <span id="pair-request-text"></span>
+    <div class="pair-request-actions">
+      <button id="pair-accept" class="btn primary">Accept</button>
+      <button id="pair-dismiss" class="btn">Dismiss</button>
+    </div>
+  </div>
+
+  <script src="sms.js"></script>
+</body>
+</html>
