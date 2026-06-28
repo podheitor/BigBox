@@ -55,6 +55,15 @@ trait Device {
 }
 
 #[proxy(
+    interface = "org.kde.kdeconnect.device.contacts",
+    default_service = "org.kde.kdeconnect"
+)]
+trait Contacts {
+    #[zbus(name = "synchronizeRemoteWithLocal")]
+    fn synchronize_remote_with_local(&self) -> zbus::Result<()>;
+}
+
+#[proxy(
     interface = "org.kde.kdeconnect.device.conversations",
     default_service = "org.kde.kdeconnect"
 )]
@@ -143,6 +152,9 @@ impl Inner {
     fn active_path(&self) -> Option<String> {
         self.state.lock().unwrap().active.as_ref().map(|a| a.path.clone())
     }
+    fn active_device_id(&self) -> Option<String> {
+        self.state.lock().unwrap().active.as_ref().map(|a| a.id.clone())
+    }
     /// Spawn on the captured runtime (no-op until the engine has started).
     fn spawn<F>(&self, fut: F)
     where
@@ -185,6 +197,13 @@ fn device_path(device_id: &str) -> String {
 impl SmsBackend for DbusHandle {
     fn devices(&self) -> Vec<PairedDevice> {
         self.inner.state.lock().unwrap().devices.values().cloned().collect()
+    }
+
+    fn contacts(&self) -> Vec<crate::Contact> {
+        match self.inner.active_device_id() {
+            Some(id) => crate::contacts::load_contacts(&id),
+            None => Vec::new(),
+        }
     }
 
     fn list_conversations(&self) -> bool {
@@ -324,6 +343,25 @@ impl DbusEngine {
 
         refresh_devices(&inner, &conn, &daemon).await;
         subscribe_active(&inner, &conn).await;
+        trigger_contacts_sync(&inner, &conn).await;
+
+        // Self-heal: re-detect the device, re-subscribe, and re-sync contacts
+        // every 20s, so BigBox recovers on its own if kdeconnectd wedges or
+        // restarts (resume-from-sleep, KDE update, …) without a manual restart.
+        {
+            let inner = inner.clone();
+            let conn = conn.clone();
+            tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(20)).await;
+                    if let Ok(d) = DaemonProxy::new(&conn).await {
+                        refresh_devices(&inner, &conn, &d).await;
+                    }
+                    subscribe_active(&inner, &conn).await;
+                    trigger_contacts_sync(&inner, &conn).await;
+                }
+            });
+        }
 
         // React to device add/remove/visibility for the lifetime of the app.
         let added = daemon.receive_device_added().await.ok();
@@ -406,10 +444,25 @@ async fn refresh_devices(inner: &Arc<Inner>, conn: &Connection, daemon: &DaemonP
     {
         let mut st = inner.state.lock().unwrap();
         st.devices = snapshot.iter().map(|d| (d.device_id.clone(), d.clone())).collect();
+        if active.is_none() {
+            // Lost the active device — drop the now-dead subscription so a
+            // later reconnect re-subscribes (and reloads) cleanly.
+            st.subscribed = None;
+        }
         st.active = active;
     }
     for d in snapshot {
         inner.emit(Event::DeviceUpdated(d));
+    }
+}
+
+/// Ask the phone to push its address book into the local vCard cache. No-op
+/// until the Contacts permission is granted on the phone; safe to call often.
+async fn trigger_contacts_sync(inner: &Arc<Inner>, conn: &Connection) {
+    let Some(id) = inner.active_device_id() else { return };
+    let path = format!("{}/contacts", device_path(&id));
+    if let Ok(p) = ContactsProxy::builder(conn).path(path).unwrap().build().await {
+        let _ = p.synchronize_remote_with_local().await;
     }
 }
 

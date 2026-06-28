@@ -14,6 +14,7 @@ const threads = new Map();        // threadId -> [SmsMessage]
 const devices = new Map();        // deviceId -> PairedDevice
 let activeThread = null;
 let pendingPairDevice = null;
+let searchQuery = '';
 
 // ── Elements ─────────────────────────────────────────────
 const el = (id) => document.getElementById(id);
@@ -27,12 +28,51 @@ const pairingEl = el('pairing');
 const deviceListEl = el('device-list');
 const devicePillEl = el('device-pill');
 
+// ── Contacts (name + photo resolution from KDE Connect vCards) ──
+const contactsByNumber = new Map(); // normalized number -> { name, photo }
+
+function normNumber(s) {
+  const d = String(s || '').replace(/\D/g, '');
+  return d.length > 9 ? d.slice(-9) : d; // last 9 digits, format-agnostic
+}
+
+async function loadContacts() {
+  try {
+    const list = await invoke('sms_contacts');
+    contactsByNumber.clear();
+    for (const c of list) {
+      for (const num of c.numbers || []) {
+        const key = normNumber(num);
+        if (key) contactsByNumber.set(key, { name: c.name, photo: c.photo || null });
+      }
+    }
+  } catch (_) {}
+}
+
+function resolveContact(address) {
+  const k = normNumber(address);
+  return k ? contactsByNumber.get(k) || null : null;
+}
+
 // ── Helpers ──────────────────────────────────────────────
 function addrLabel(addresses) {
   if (!addresses || !addresses.length) return 'Unknown';
   return addresses
-    .map((a) => a.displayName || a.address || 'Unknown')
+    .map((a) => {
+      const c = resolveContact(a.address);
+      return (c && c.name) || a.displayName || a.address || 'Unknown';
+    })
     .join(', ');
+}
+
+// Photo of the conversation's first contact, if any.
+function addrPhoto(addresses) {
+  if (!addresses) return null;
+  for (const a of addresses) {
+    const c = resolveContact(a.address);
+    if (c && c.photo) return c.photo;
+  }
+  return null;
 }
 
 function initials(label) {
@@ -115,7 +155,16 @@ function renderPairList() {
 }
 
 function renderConvoList() {
-  const list = [...conversations.values()].sort((a, b) => b.date - a.date);
+  let list = [...conversations.values()].sort((a, b) => b.date - a.date);
+  const q = searchQuery.trim().toLowerCase();
+  if (q) {
+    list = list.filter((c) => {
+      const label = addrLabel(c.addresses).toLowerCase();
+      const nums = (c.addresses || []).map((a) => a.address).join(' ').toLowerCase();
+      const snip = (c.snippet || '').toLowerCase();
+      return label.includes(q) || nums.includes(q) || snip.includes(q);
+    });
+  }
   convoListEl.innerHTML = '';
   for (const c of list) {
     const label = addrLabel(c.addresses);
@@ -126,7 +175,13 @@ function renderConvoList() {
 
     const avatar = document.createElement('div');
     avatar.className = 'avatar';
-    avatar.textContent = initials(label);
+    const photo = addrPhoto(c.addresses);
+    if (photo) {
+      avatar.classList.add('photo');
+      avatar.style.backgroundImage = `url("${photo}")`;
+    } else {
+      avatar.textContent = initials(label);
+    }
 
     const body = document.createElement('div');
     body.className = 'convo-body';
@@ -265,6 +320,13 @@ function initResizer() {
 
 async function init() {
   initResizer();
+  const searchEl = el('convo-search');
+  if (searchEl) {
+    searchEl.addEventListener('input', () => {
+      searchQuery = searchEl.value;
+      renderConvoList();
+    });
+  }
   el('send-btn').onclick = sendCurrent;
   el('back-btn').onclick = () => { activeThread = null; renderConvoList(); renderThread(); };
 
@@ -305,12 +367,20 @@ async function init() {
   });
 
   // Initial pull.
+  await loadContacts();
   try {
     const list = await invoke('sms_devices');
     for (const d of list) devices.set(d.deviceId, d);
   } catch (_) {}
   renderDevicesGate();
   invoke('sms_list_conversations');
+
+  // Contacts sync asynchronously after the phone grants the Contacts
+  // permission — reload periodically and re-render names/photos.
+  setInterval(async () => {
+    await loadContacts();
+    renderConvoList();
+  }, 15000);
 
   // While disconnected, keep polling for the device so the pane recovers on its
   // own when KDE Connect reachability flaps (no sms-device event may arrive).

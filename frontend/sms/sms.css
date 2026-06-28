@@ -83,6 +83,24 @@ html, body {
 .device-pill:empty { display: none; }
 .device-pill.offline { background: var(--overlay); color: var(--text); }
 
+.convo-search-wrap {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--surface0);
+}
+.convo-search {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--surface0);
+  border: 1px solid var(--surface1);
+  border-radius: 8px;
+  padding: 7px 12px;
+  color: var(--text);
+  font-size: 13px;
+  outline: none;
+}
+.convo-search::placeholder { color: var(--overlay); }
+.convo-search:focus { border-color: var(--accent); }
+
 .convo-list { overflow-y: auto; flex: 1; }
 
 .convo-item {
@@ -103,6 +121,12 @@ html, body {
   color: var(--crust);
   display: flex; align-items: center; justify-content: center;
   font-weight: 600; font-size: 15px;
+}
+.avatar.photo {
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  color: transparent;
 }
 
 .convo-body { min-width: 0; flex: 1; }
