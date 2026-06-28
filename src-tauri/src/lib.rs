@@ -41,6 +41,13 @@ pub fn run() {
             commands::notify_mail,
             commands::show_service_menu,
             commands::bb_log,
+            commands::sms_devices,
+            commands::sms_list_conversations,
+            commands::sms_load_thread,
+            commands::sms_send,
+            commands::sms_request_pair,
+            commands::sms_accept_pair,
+            commands::sms_unpair,
             vorcaro::vorcaro_get_state,
             vorcaro::vorcaro_save_contact,
             vorcaro::vorcaro_delete_contact,
@@ -110,6 +117,10 @@ pub fn run() {
             // Respawn orchestrators for campaigns that were Scheduled / Running
             // when the app last quit. Idempotent; safe to call once at boot.
             vorcaro::rehydrate_on_boot(app.handle().clone());
+
+            // Boot the native KDE Connect peer that backs the SMS service:
+            // LAN discovery + TLS links + the SMS plugin. No-op without a phone.
+            commands::start_sms(app.handle().clone());
 
             #[cfg(target_os = "linux")]
             commands::setup_gtk_layout(app)?;

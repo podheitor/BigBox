@@ -15,6 +15,7 @@ dirs.workspace = true
 bigbox-core.workspace = true
 bigbox-config.workspace = true
 bigbox-driver-assets.workspace = true
+bigbox-kdeconnect.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = { version = "0.18", features = ["v3_24"] }

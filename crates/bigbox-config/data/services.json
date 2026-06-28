@@ -24,6 +24,14 @@
     "user_agent_override": null
   },
   {
+    "id": "sms",
+    "name": "Phone SMS",
+    "url": "local://sms",
+    "icon": null,
+    "color": "#34B7F1",
+    "user_agent_override": null
+  },
+  {
     "id": "telegram",
     "name": "Telegram",
     "url": "https://web.telegram.org/k/",

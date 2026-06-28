@@ -15,6 +15,14 @@ rand       = "0.8"
 base64     = "0.22"
 tokio      = { version = "1", features = ["sync", "time", "rt", "macros"] }
 reqwest    = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+# KDE Connect peer (bigbox-kdeconnect): LAN TLS + self-signed device cert.
+# Pin rustls to the `ring` provider so Windows builds need no cmake/nasm.
+rustls          = { version = "0.23", default-features = false, features = ["ring", "std", "logging"] }
+tokio-rustls    = { version = "0.26", default-features = false, features = ["ring"] }
+rustls-pemfile  = "2"
+# `ring` backend (no aws-lc-rs) → EC P-256 keys, no cmake/nasm on Windows.
+rcgen           = { version = "0.13", default-features = false, features = ["ring", "pem"] }
+sha2            = "0.10"
 tauri      = { version = "2", features = ["devtools", "unstable"] }
 tauri-build = { version = "2", features = [] }
 
@@ -28,9 +36,10 @@ bigbox-contract      = { path = "crates/bigbox-contract" }
 bigbox-orchestrator  = { path = "crates/bigbox-orchestrator" }
 bigbox-shell         = { path = "crates/bigbox-shell" }
 bigbox-vorcaro       = { path = "crates/bigbox-vorcaro" }
+bigbox-kdeconnect    = { path = "crates/bigbox-kdeconnect" }
 
 [workspace.package]
-version = "0.1.9"
+version = "0.2.0"
 edition = "2021"
 license = "GPL-3.0-or-later"
 authors = ["Heitor Faria"]

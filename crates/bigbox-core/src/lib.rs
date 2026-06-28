@@ -10,4 +10,5 @@
 pub mod config;
 pub mod layout;
 pub mod services;
+pub mod sms;
 pub mod vorcaro;
