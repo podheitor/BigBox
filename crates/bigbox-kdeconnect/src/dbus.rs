@@ -353,7 +353,7 @@ impl DbusEngine {
             let conn = conn.clone();
             tokio::spawn(async move {
                 loop {
-                    tokio::time::sleep(std::time::Duration::from_secs(20)).await;
+                    tokio::time::sleep(std::time::Duration::from_secs(30)).await;
                     if let Ok(d) = DaemonProxy::new(&conn).await {
                         refresh_devices(&inner, &conn, &d).await;
                     }
@@ -460,6 +460,11 @@ async fn refresh_devices(inner: &Arc<Inner>, conn: &Connection, daemon: &DaemonP
 /// until the Contacts permission is granted on the phone; safe to call often.
 async fn trigger_contacts_sync(inner: &Arc<Inner>, conn: &Connection) {
     let Some(id) = inner.active_device_id() else { return };
+    // Stop asking once contacts are already cached — re-syncing the whole
+    // address book every cycle is pointless load on the daemon + phone.
+    if !crate::contacts::load_contacts(&id).is_empty() {
+        return;
+    }
     let path = format!("{}/contacts", device_path(&id));
     if let Ok(p) = ContactsProxy::builder(conn).path(path).unwrap().build().await {
         let _ = p.synchronize_remote_with_local().await;
@@ -548,13 +553,25 @@ fn on_conversation_loaded(inner: &Arc<Inner>, thread_id: i64) {
 /// with a small gap so the daemon is never flooded.
 async fn loader_worker(inner: Arc<Inner>, mut rx: mpsc::UnboundedReceiver<i64>) {
     while let Some(thread_id) = rx.recv().await {
-        let Some(path) = inner.active_path() else { continue };
-        if let Some(conn) = inner.conn.get() {
-            if let Ok(p) = ConversationsProxy::builder(conn).path(path).unwrap().build().await {
-                let _ = p.request_conversation(thread_id, 0, 1).await;
+        // Only request when the phone is reachable — firing at a disconnected /
+        // flapping phone is what backs up and wedges kdeconnectd. When it's gone,
+        // drop from `requested` so the thread re-queues (via a fresh
+        // requestAllConversationThreads) on the next reconnect.
+        match inner.active_path() {
+            Some(path) => {
+                if let Some(conn) = inner.conn.get() {
+                    if let Ok(p) =
+                        ConversationsProxy::builder(conn).path(path).unwrap().build().await
+                    {
+                        let _ = p.request_conversation(thread_id, 0, 1).await;
+                    }
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+            }
+            None => {
+                inner.state.lock().unwrap().requested.remove(&thread_id);
             }
         }
-        tokio::time::sleep(std::time::Duration::from_millis(60)).await;
     }
 }
 
