@@ -323,9 +323,6 @@ async function init() {
       if (pairedReachableDevice()) invoke('sms_list_conversations');
     } catch (_) {}
   }, 3000);
-
-  // Opening the pane counts as "seen" — clear the sidebar/tray SMS badge.
-  invoke('clear_badge', { label: 'svc-sms' }).catch(() => {});
 }
 
 init();

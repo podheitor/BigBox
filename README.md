@@ -4,7 +4,7 @@
 
 ### All your messaging apps in one blazing-fast window.
 
-**WhatsApp · Telegram · Gmail · Slack · Discord · and more**
+**WhatsApp · Telegram · Phone SMS · Gmail · Outlook · Slack · Discord · and more**
 
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
 [![Built with Tauri](https://img.shields.io/badge/Built%20with-Tauri%20v2-orange)](https://tauri.app)
@@ -49,11 +49,15 @@ BigBox uses your system's native WebView engine instead of bundling an entire Ch
 
 | Service | Notifications | Notes |
 |---------|:---:|-------|
-| **WhatsApp** | ✅ | Full Web experience |
+| **WhatsApp** | ✅ | Full Web experience (+ WhatsApp Business) |
 | **Telegram** | ✅ | Web K client |
-| **Gmail** | ✅ | Full Gmail interface |
+| **Phone SMS** | ✅ | **Native** — read & reply to your **Android phone's SMS** via KDE Connect (unread badge + new-message toast). Android only. |
+| **Gmail** | ✅ | New-mail badge + desktop toast |
+| **Outlook** | ✅ | New-mail badge + desktop toast |
+| **Carbonio** | ✅ | Self-hosted (your own URL); new-mail badge + toast |
 | **Slack** | ✅ | Workspace app |
 | **Discord** | ✅ | Full Discord client |
+| **Vorcaro's Studio** | — | Built-in WhatsApp/Telegram bulk-campaign tool |
 | **Google Calendar** | — | |
 | **Google Drive** | — | |
 | **Notion** | — | |
