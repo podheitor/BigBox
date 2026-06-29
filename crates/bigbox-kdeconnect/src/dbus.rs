@@ -342,8 +342,9 @@ impl DbusEngine {
         };
 
         refresh_devices(&inner, &conn, &daemon).await;
-        subscribe_active(&inner, &conn).await;
-        trigger_contacts_sync(&inner, &conn).await;
+        let to = std::time::Duration::from_secs(8);
+        let _ = tokio::time::timeout(to, subscribe_active(&inner, &conn)).await;
+        let _ = tokio::time::timeout(to, trigger_contacts_sync(&inner, &conn)).await;
 
         // Self-heal: re-detect the device, re-subscribe, and re-sync contacts
         // every 20s, so BigBox recovers on its own if kdeconnectd wedges or
@@ -357,8 +358,9 @@ impl DbusEngine {
                     if let Ok(d) = DaemonProxy::new(&conn).await {
                         refresh_devices(&inner, &conn, &d).await;
                     }
-                    subscribe_active(&inner, &conn).await;
-                    trigger_contacts_sync(&inner, &conn).await;
+                    let to = std::time::Duration::from_secs(8);
+                    let _ = tokio::time::timeout(to, subscribe_active(&inner, &conn)).await;
+                    let _ = tokio::time::timeout(to, trigger_contacts_sync(&inner, &conn)).await;
                 }
             });
         }
@@ -410,37 +412,93 @@ impl DbusEngine {
     }
 }
 
-async fn refresh_devices(inner: &Arc<Inner>, conn: &Connection, daemon: &DaemonProxy<'_>) {
-    let all = daemon.devices(false, false).await.unwrap_or_default();
-    let paired: std::collections::HashSet<String> =
-        daemon.devices(false, true).await.unwrap_or_default().into_iter().collect();
-
-    let mut snapshot: Vec<PairedDevice> = Vec::new();
-    let mut active: Option<ActiveDevice> = None;
-
-    for id in all {
-        let path = device_path(&id);
-        let (name, reachable) =
-            match DeviceProxy::builder(conn).path(path.clone()).unwrap().build().await {
-                Ok(p) => (
-                    p.name().await.unwrap_or_else(|_| id.clone()),
-                    p.is_reachable().await.unwrap_or(false),
-                ),
-                Err(_) => (id.clone(), false),
-            };
-        let is_paired = paired.contains(&id);
-        let pd = PairedDevice {
-            device_id: id.clone(),
-            name: name.clone(),
-            paired: is_paired,
-            reachable,
-        };
-        if is_paired && reachable && active.is_none() {
-            active = Some(ActiveDevice { id: id.clone(), path, name });
+/// Read paired devices straight from KDE Connect's config so an offline (or
+/// daemon-wedged) phone is still known — `daemon.devices()` omits devices that
+/// aren't currently present, which made the pane fall back to "Searching…".
+fn read_trusted_devices() -> Vec<(String, String)> {
+    let Some(dir) = dirs::config_dir() else { return Vec::new() };
+    let path = dir.join("kdeconnect").join("trusted_devices");
+    let Ok(text) = std::fs::read_to_string(&path) else { return Vec::new() };
+    let mut out = Vec::new();
+    let mut cur: Option<String> = None;
+    for line in text.lines() {
+        let line = line.trim();
+        if line.starts_with('[') && line.ends_with(']') && line.len() > 2 {
+            cur = Some(line[1..line.len() - 1].to_string());
+        } else if let Some(name) = line.strip_prefix("name=") {
+            if let Some(id) = &cur {
+                out.push((id.clone(), name.to_string()));
+            }
         }
-        snapshot.push(pd);
+    }
+    out
+}
+
+async fn refresh_devices(inner: &Arc<Inner>, conn: &Connection, daemon: &DaemonProxy<'_>) {
+    use std::collections::BTreeMap;
+
+    // Seed from the trusted (paired) devices in config — these survive the phone
+    // being offline or the daemon being wedged.
+    let mut by_id: BTreeMap<String, PairedDevice> = read_trusted_devices()
+        .into_iter()
+        .map(|(id, name)| {
+            (
+                id.clone(),
+                PairedDevice { device_id: id, name, paired: true, reachable: false },
+            )
+        })
+        .collect();
+
+    // Overlay live daemon state (names + reachability) — but NEVER block on a
+    // wedged daemon: if it doesn't answer within a few seconds, keep the
+    // config-seeded devices (so the pane still shows "<phone> · offline").
+    let overlay = tokio::time::timeout(std::time::Duration::from_secs(4), async {
+        let present = daemon.devices(false, false).await.unwrap_or_default();
+        let paired: std::collections::HashSet<String> =
+            daemon.devices(false, true).await.unwrap_or_default().into_iter().collect();
+        let mut out = Vec::new();
+        for id in present {
+            let path = device_path(&id);
+            let (name, reachable) =
+                match DeviceProxy::builder(conn).path(path).unwrap().build().await {
+                    Ok(p) => (p.name().await.ok(), p.is_reachable().await.unwrap_or(false)),
+                    Err(_) => (None, false),
+                };
+            out.push((id.clone(), name, reachable, paired.contains(&id)));
+        }
+        out
+    })
+    .await
+    .unwrap_or_default();
+
+    for (id, name, reachable, is_paired) in overlay {
+        let e = by_id.entry(id.clone()).or_insert_with(|| PairedDevice {
+            device_id: id.clone(),
+            name: id.clone(),
+            paired: is_paired,
+            reachable: false,
+        });
+        if let Some(n) = name {
+            e.name = n;
+        }
+        e.reachable = reachable;
+        if is_paired {
+            e.paired = true;
+        }
     }
 
+    let mut active: Option<ActiveDevice> = None;
+    for d in by_id.values() {
+        if d.paired && d.reachable && active.is_none() {
+            active = Some(ActiveDevice {
+                id: d.device_id.clone(),
+                path: device_path(&d.device_id),
+                name: d.name.clone(),
+            });
+        }
+    }
+
+    let snapshot: Vec<PairedDevice> = by_id.into_values().collect();
     {
         let mut st = inner.state.lock().unwrap();
         st.devices = snapshot.iter().map(|d| (d.device_id.clone(), d.clone())).collect();
