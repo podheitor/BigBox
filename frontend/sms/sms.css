@@ -102,6 +102,7 @@ html, body {
 .convo-search:focus { border-color: var(--accent); }
 
 .convo-list { overflow-y: auto; flex: 1; }
+.empty-note { text-align: center; padding: 28px 16px; font-size: 13px; }
 
 .convo-item {
   display: flex;
