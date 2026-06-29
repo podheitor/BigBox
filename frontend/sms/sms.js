@@ -99,20 +99,26 @@ function pairedReachableDevice() {
 // ── Rendering ────────────────────────────────────────────
 function renderDevicesGate() {
   const active = pairedReachableDevice();
+  const anyPaired = [...devices.values()].find((d) => d.paired);
   if (active) {
+    // Connected.
     pairingEl.classList.add('hidden');
     devicePillEl.textContent = active.name || 'Phone';
     devicePillEl.classList.remove('offline');
+    renderConvoList();
+  } else if (anyPaired) {
+    // Paired but offline (phone asleep / off Wi-Fi). Keep the messages view with
+    // whatever conversations are cached — don't dump the user back to the
+    // install/pair screen. The pill + empty state show it's reconnecting.
+    pairingEl.classList.add('hidden');
+    devicePillEl.textContent = `${anyPaired.name || 'Phone'} · offline`;
+    devicePillEl.classList.add('offline');
+    renderConvoList();
   } else {
+    // Nothing paired — show the install/pair overlay.
     pairingEl.classList.remove('hidden');
     renderPairList();
-    const anyPaired = [...devices.values()].find((d) => d.paired);
-    if (anyPaired) {
-      devicePillEl.textContent = anyPaired.name || 'Phone';
-      devicePillEl.classList.add('offline');
-    } else {
-      devicePillEl.textContent = '';
-    }
+    devicePillEl.textContent = '';
   }
 }
 
@@ -166,6 +172,16 @@ function renderConvoList() {
     });
   }
   convoListEl.innerHTML = '';
+  if (list.length === 0) {
+    const offline = !pairedReachableDevice() && [...devices.values()].some((d) => d.paired);
+    const msg = q
+      ? 'No matches'
+      : offline
+        ? '📴 Phone offline — reconnecting…'
+        : 'Loading conversations…';
+    convoListEl.innerHTML = `<p class="muted empty-note">${msg}</p>`;
+    return;
+  }
   for (const c of list) {
     const label = addrLabel(c.addresses);
     const item = document.createElement('div');
