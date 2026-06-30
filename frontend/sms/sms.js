@@ -166,6 +166,21 @@ function renderPairList() {
 
 function renderConvoList() {
   let list = [...conversations.values()].sort((a, b) => b.date - a.date);
+  // The phone can report more than one threadId for the same number/group,
+  // which now shows up as a duplicated name. Collapse by the set of normalized
+  // addresses, keeping the most recent thread (list is already newest-first).
+  const seenKey = new Set();
+  list = list.filter((c) => {
+    const key = (c.addresses || [])
+      .map((a) => normNumber(a.address))
+      .filter(Boolean)
+      .sort()
+      .join('|');
+    if (!key) return true; // no resolvable address — leave it as-is
+    if (seenKey.has(key)) return false;
+    seenKey.add(key);
+    return true;
+  });
   const q = searchQuery.trim().toLowerCase();
   if (q) {
     list = list.filter((c) => {

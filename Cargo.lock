@@ -130,7 +130,7 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
 name = "bigbox"
-version = "1.0.7"
+version = "1.0.8"
 dependencies = [
  "bigbox-shell",
  "bigbox-vorcaro",
@@ -141,7 +141,7 @@ dependencies = [
 
 [[package]]
 name = "bigbox-cloud"
-version = "1.0.7"
+version = "1.0.8"
 dependencies = [
  "bigbox-core",
  "dirs 5.0.1",
@@ -153,7 +153,7 @@ dependencies = [
 
 [[package]]
 name = "bigbox-config"
-version = "1.0.7"
+version = "1.0.8"
 dependencies = [
  "bigbox-core",
  "dirs 5.0.1",
@@ -163,7 +163,7 @@ dependencies = [
 
 [[package]]
 name = "bigbox-contract"
-version = "1.0.7"
+version = "1.0.8"
 dependencies = [
  "bigbox-core",
  "serde_json",
@@ -172,7 +172,7 @@ dependencies = [
 
 [[package]]
 name = "bigbox-core"
-version = "1.0.7"
+version = "1.0.8"
 dependencies = [
  "chrono",
  "serde",
@@ -181,11 +181,11 @@ dependencies = [
 
 [[package]]
 name = "bigbox-driver-assets"
-version = "1.0.7"
+version = "1.0.8"
 
 [[package]]
 name = "bigbox-kdeconnect"
-version = "1.0.7"
+version = "1.0.8"
 dependencies = [
  "bigbox-core",
  "dirs 5.0.1",
@@ -203,7 +203,7 @@ dependencies = [
 
 [[package]]
 name = "bigbox-orchestrator"
-version = "1.0.7"
+version = "1.0.8"
 dependencies = [
  "base64 0.22.1",
  "bigbox-cloud",
@@ -222,7 +222,7 @@ dependencies = [
 
 [[package]]
 name = "bigbox-shell"
-version = "1.0.7"
+version = "1.0.8"
 dependencies = [
  "bigbox-config",
  "bigbox-core",
@@ -239,7 +239,7 @@ dependencies = [
 
 [[package]]
 name = "bigbox-vorcaro"
-version = "1.0.7"
+version = "1.0.8"
 dependencies = [
  "bigbox-cloud",
  "bigbox-config",
