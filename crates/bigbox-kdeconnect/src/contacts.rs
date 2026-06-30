@@ -7,33 +7,70 @@
 //! grants the Contacts permission). We parse those vCards directly — no D-Bus.
 
 use bigbox_core::sms::Contact;
+use std::path::Path;
 
-/// Load all contacts cached for a device. Empty if the cache is missing or the
-/// phone hasn't synced contacts yet.
+/// Load contacts for a device from two sources:
+/// 1. KDE Connect's synced vCard cache (`~/.local/share/kpeoplevcard/...`) —
+///    works only if the phone's contacts plugin actually syncs.
+/// 2. A user-managed folder `~/.config/bigbox/contacts/*.vcf` — drop an
+///    exported address book here and names/photos work even when KDE Connect's
+///    contacts sync is broken (a single export file may hold many vCards).
 pub fn load_contacts(device_id: &str) -> Vec<Contact> {
-    let dir = match dirs::data_dir() {
-        Some(d) => d.join("kpeoplevcard").join(format!("kdeconnect-{device_id}")),
-        None => return Vec::new(),
-    };
-    let rd = match std::fs::read_dir(&dir) {
-        Ok(r) => r,
-        Err(_) => return Vec::new(),
-    };
     let mut out = Vec::new();
+    if let Some(d) = dirs::data_dir() {
+        load_dir(&d.join("kpeoplevcard").join(format!("kdeconnect-{device_id}")), &mut out);
+    }
+    if let Some(c) = dirs::config_dir() {
+        load_dir(&c.join("bigbox").join("contacts"), &mut out);
+    }
+    out
+}
+
+fn load_dir(dir: &Path, out: &mut Vec<Contact>) {
+    let Ok(rd) = std::fs::read_dir(dir) else { return };
     for entry in rd.flatten() {
         let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("vcf") {
+        let is_vcf = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.eq_ignore_ascii_case("vcf"))
+            .unwrap_or(false);
+        if !is_vcf {
             continue;
         }
         if let Ok(text) = std::fs::read_to_string(&path) {
-            if let Some(c) = parse_vcard(&text) {
-                if !c.numbers.is_empty() {
-                    out.push(c);
+            for card in split_vcards(&text) {
+                if let Some(c) = parse_vcard(&card) {
+                    if !c.numbers.is_empty() {
+                        out.push(c);
+                    }
                 }
             }
         }
     }
-    out
+}
+
+/// Split a (possibly multi-contact) .vcf into individual vCards.
+fn split_vcards(text: &str) -> Vec<String> {
+    let mut cards = Vec::new();
+    let mut cur = String::new();
+    let mut in_card = false;
+    for line in text.lines() {
+        let upper = line.trim_start().to_ascii_uppercase();
+        if upper.starts_with("BEGIN:VCARD") {
+            in_card = true;
+            cur.clear();
+        }
+        if in_card {
+            cur.push_str(line);
+            cur.push('\n');
+        }
+        if upper.starts_with("END:VCARD") && in_card {
+            cards.push(std::mem::take(&mut cur));
+            in_card = false;
+        }
+    }
+    cards
 }
 
 /// Parse a single vCard into a [`Contact`] (name + numbers + optional photo).
@@ -128,6 +165,16 @@ PHOTO;ENCODING=BASE64;JPEG:/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAAA\r\n AAAAAAAAAA\r
         assert!(p.starts_with("data:image/jpeg;base64,/9j/4AAQ"));
         // folded continuation lines joined into the base64 value
         assert!(p.ends_with("AAAAAAAAAA"));
+    }
+
+    #[test]
+    fn splits_a_multi_contact_export() {
+        let vc = "BEGIN:VCARD\nFN:Ana\nTEL:111\nEND:VCARD\n\
+BEGIN:VCARD\nFN:Bruno\nTEL:222\nEND:VCARD\n";
+        let cards = split_vcards(vc);
+        assert_eq!(cards.len(), 2);
+        assert_eq!(parse_vcard(&cards[0]).unwrap().name, "Ana");
+        assert_eq!(parse_vcard(&cards[1]).unwrap().name, "Bruno");
     }
 
     #[test]
