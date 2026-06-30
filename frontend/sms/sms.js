@@ -46,6 +46,10 @@ async function loadContacts() {
         if (key) contactsByNumber.set(key, { name: c.name, photo: c.photo || null });
       }
     }
+    // Names may have arrived after the conversation list first rendered (the
+    // phone can deliver conversations before the contacts invoke resolves) —
+    // re-render so numbers turn into names without waiting for the next event.
+    renderConvoList();
   } catch (_) {}
 }
 
