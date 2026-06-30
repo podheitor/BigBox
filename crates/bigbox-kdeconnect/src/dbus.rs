@@ -520,7 +520,8 @@ async fn trigger_contacts_sync(inner: &Arc<Inner>, conn: &Connection) {
     let Some(id) = inner.active_device_id() else { return };
     // Stop asking once contacts are already cached — re-syncing the whole
     // address book every cycle is pointless load on the daemon + phone.
-    if !crate::contacts::load_contacts(&id).is_empty() {
+    // (Cheap check — don't parse thousands of vCards just to test non-empty.)
+    if crate::contacts::has_any_contacts(&id) {
         return;
     }
     let path = format!("{}/contacts", device_path(&id));

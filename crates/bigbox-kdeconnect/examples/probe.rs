@@ -20,6 +20,12 @@ async fn main() {
     for d in handle.devices() {
         println!("  {d:?}");
     }
+    // Contacts: confirm the folder loads (KDE Connect cache + ~/.config/bigbox/contacts).
+    let t = std::time::Instant::now();
+    let contacts = handle.contacts();
+    let with_photo = contacts.iter().filter(|c| c.photo.is_some()).count();
+    println!("== CONTACTS: {} loaded ({with_photo} with photo) in {:?} ==",
+        contacts.len(), t.elapsed());
     println!("== requesting conversations ==");
     println!("  list_conversations() -> {}", handle.list_conversations());
 

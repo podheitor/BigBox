@@ -391,12 +391,13 @@ async function init() {
   renderDevicesGate();
   invoke('sms_list_conversations');
 
-  // Contacts sync asynchronously after the phone grants the Contacts
-  // permission — reload periodically and re-render names/photos.
+  // Contacts can be large (thousands of vCards) — reload infrequently. They're
+  // kept fresh by the external sync (KDE Connect / vdirsyncer timer); a 5-min
+  // refresh is plenty and avoids re-transferring megabytes every few seconds.
   setInterval(async () => {
     await loadContacts();
     renderConvoList();
-  }, 15000);
+  }, 300000);
 
   // While disconnected, keep polling for the device so the pane recovers on its
   // own when KDE Connect reachability flaps (no sms-device event may arrive).

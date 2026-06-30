@@ -26,6 +26,31 @@ pub fn load_contacts(device_id: &str) -> Vec<Contact> {
     out
 }
 
+/// Cheap check (no parsing) for whether any contacts are cached — used to stop
+/// re-triggering KDE Connect's contacts sync once we have data.
+pub fn has_any_contacts(device_id: &str) -> bool {
+    fn dir_has_vcf(dir: &Path) -> bool {
+        std::fs::read_dir(dir)
+            .map(|rd| {
+                rd.flatten().any(|e| {
+                    e.path()
+                        .extension()
+                        .and_then(|x| x.to_str())
+                        .map(|x| x.eq_ignore_ascii_case("vcf"))
+                        .unwrap_or(false)
+                })
+            })
+            .unwrap_or(false)
+    }
+    let kde = dirs::data_dir()
+        .map(|d| dir_has_vcf(&d.join("kpeoplevcard").join(format!("kdeconnect-{device_id}"))))
+        .unwrap_or(false);
+    let user = dirs::config_dir()
+        .map(|c| dir_has_vcf(&c.join("bigbox").join("contacts")))
+        .unwrap_or(false);
+    kde || user
+}
+
 fn load_dir(dir: &Path, out: &mut Vec<Contact>) {
     let Ok(rd) = std::fs::read_dir(dir) else { return };
     for entry in rd.flatten() {
