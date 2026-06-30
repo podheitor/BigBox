@@ -61,12 +61,13 @@ function resolveContact(address) {
 // ── Helpers ──────────────────────────────────────────────
 function addrLabel(addresses) {
   if (!addresses || !addresses.length) return 'Unknown';
-  return addresses
-    .map((a) => {
-      const c = resolveContact(a.address);
-      return (c && c.name) || a.displayName || a.address || 'Unknown';
-    })
-    .join(', ');
+  const labels = addresses.map((a) => {
+    const c = resolveContact(a.address);
+    return (c && c.name) || a.displayName || a.address || 'Unknown';
+  });
+  // The phone often repeats the same address within one conversation, which
+  // rendered as "Name, Name" / "+123, +123" — show each participant once.
+  return [...new Set(labels)].join(', ');
 }
 
 // Photo of the conversation's first contact, if any.
@@ -171,9 +172,9 @@ function renderConvoList() {
   // addresses, keeping the most recent thread (list is already newest-first).
   const seenKey = new Set();
   list = list.filter((c) => {
-    const key = (c.addresses || [])
-      .map((a) => normNumber(a.address))
-      .filter(Boolean)
+    const key = [
+      ...new Set((c.addresses || []).map((a) => normNumber(a.address)).filter(Boolean)),
+    ]
       .sort()
       .join('|');
     if (!key) return true; // no resolvable address — leave it as-is
