@@ -16,6 +16,10 @@ pub struct UserService {
     pub url: Option<String>,
     #[serde(default = "default_true")]
     pub enabled: bool,
+    /// Terminate this service's web process after it stays hidden and idle;
+    /// it reloads on next open. Trades background notifications for RAM.
+    #[serde(default)]
+    pub hibernate: bool,
 }
 
 fn default_true() -> bool { true }

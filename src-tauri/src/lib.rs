@@ -108,6 +108,11 @@ pub fn run() {
                     return;
                 }
 
+                if let Some(svc_id) = eid.strip_prefix("hibernate-") {
+                    commands::toggle_hibernate(app, svc_id);
+                    return;
+                }
+
                 if let Some(svc_id) = eid.strip_prefix("remove-") {
                     let state: tauri::State<'_, commands::AppState> = app.state();
                     let _ = commands::remove_service(app.clone(), state, svc_id.to_string());
@@ -122,6 +127,9 @@ pub fn run() {
             // Boot the native KDE Connect peer that backs the SMS service:
             // LAN discovery + TLS links + the SMS plugin. No-op without a phone.
             commands::start_sms(app.handle().clone());
+
+            // Terminate the web process of opt-in services left idle (hidden).
+            commands::start_hibernation_sweep(app.handle().clone());
 
             #[cfg(target_os = "linux")]
             commands::setup_gtk_layout(app)?;

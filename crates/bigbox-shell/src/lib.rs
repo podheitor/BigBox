@@ -11,4 +11,6 @@
 //! re-export when placed at a library's crate root.
 
 mod commands;
+mod hibernate;
 pub use commands::*;
+pub use hibernate::{start_hibernation_sweep, toggle_hibernate};

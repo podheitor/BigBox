@@ -100,13 +100,16 @@ function trackOpenServiceDuration(serviceId, elapsedMs) {
 
 
 // Sequential preload: after first service opened, preload remaining in background
-const PRELOAD_INTER_STEP_MS = 2000;
+// Spread page loads: at 2 s all services loaded at once and the CPU/swap
+// burst starved PipeWire (Bluetooth audio stutter) on 16 GB machines.
+const PRELOAD_INTER_STEP_MS = 10000;
 
 async function preloadRemainingServices(excludeId) {
   if (preloadDone) return;
   preloadDone = true;
 
-  const remaining = config.services.filter(s => s.id !== excludeId);
+  // Hibernating services load on first open instead of at boot.
+  const remaining = config.services.filter(s => s.id !== excludeId && !s.hibernate);
   if (remaining.length === 0) return;
 
   // Small delay before starting preload to let first service settle

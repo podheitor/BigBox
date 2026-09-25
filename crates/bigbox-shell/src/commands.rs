@@ -9,7 +9,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 
-use tauri::menu::{Menu, MenuItemBuilder, PredefinedMenuItem};
+use tauri::menu::{CheckMenuItemBuilder, Menu, MenuItemBuilder, PredefinedMenuItem};
 use tauri::{AppHandle, Emitter, Manager, State, WebviewBuilder, WebviewUrl};
 use tauri::{LogicalPosition, LogicalSize};
 
@@ -34,6 +34,10 @@ pub struct AppState {
     pub mail_counts:   Mutex<HashMap<String, u32>>,
     /// Per-service zoom level (1.0 = 100%). Persists for the session.
     pub zoom_levels:   Mutex<HashMap<String, f64>>,
+    /// Last moment each service WebView was visible (see `hibernate`).
+    pub last_used:     Mutex<HashMap<String, std::time::Instant>>,
+    /// Labels whose web process was terminated by the hibernation sweep.
+    pub hibernated:    Mutex<HashSet<String>>,
 }
 
 // ── Config commands ──────────────────────────────────────────────
@@ -72,7 +76,9 @@ pub fn add_service(
         (u.starts_with("http://") || u.starts_with("https://")).then_some(u)
     });
 
-    cfg.services.push(UserService { id, service_type, display_name, url, enabled: true });
+    cfg.services.push(UserService {
+        id, service_type, display_name, url, enabled: true, hibernate: false,
+    });
     config::save(&cfg);
     cfg
 }
@@ -90,6 +96,8 @@ pub fn remove_service(
     }
 
     state.created_views.lock().unwrap().remove(&label);
+    state.hibernated.lock().unwrap().remove(&label);
+    state.last_used.lock().unwrap().remove(&label);
 
     let mut active = state.active_view.lock().unwrap();
     if active.as_deref() == Some(&label) {
@@ -889,6 +897,11 @@ pub fn open_service(
 ) -> Result<(), String> {
     let label  = svc_label(&service_id);
 
+    // The view losing the active slot was in use until now.
+    if let Some(prev) = state.active_view.lock().unwrap().clone() {
+        crate::hibernate::mark_used(&state, &prev);
+    }
+
     // Collapse shell to sidebar-only (Linux GtkBox packing)
     #[cfg(target_os = "linux")]
     collapse_shell_impl(&app);
@@ -913,6 +926,8 @@ pub fn open_service(
         &url,
         user_agent.as_deref(),
     )?;
+    crate::hibernate::wake_if_hibernated(&app, &state, &label);
+    crate::hibernate::mark_used(&state, &label);
 
     // Linux/other: show the in-window webview and bound it to the content area.
     #[cfg(not(target_os = "windows"))]
@@ -1309,6 +1324,8 @@ fn ensure_service_webview_created(
         match window.add_child(builder, init_pos, init_size) {
             Ok(wv) => {
                 state.created_views.lock().unwrap().insert(label.to_string());
+                crate::hibernate::mark_used(state, label);
+                crate::hibernate::apply_lean_cache_model(&wv);
                 setup_webview_permissions(&wv);
                 Ok(())
             }
@@ -1369,11 +1386,16 @@ pub fn show_service_menu(
     let reload = MenuItemBuilder::with_id(format!("reload-{id}"), "Reload")
         .build(&app)
         .map_err(|e| e.to_string())?;
+    let hibernate_on = config::load().services.iter().any(|s| s.id == id && s.hibernate);
+    let hibernate = CheckMenuItemBuilder::with_id(format!("hibernate-{id}"), "Hibernate when idle")
+        .checked(hibernate_on)
+        .build(&app)
+        .map_err(|e| e.to_string())?;
     let separator = PredefinedMenuItem::separator(&app).map_err(|e| e.to_string())?;
     let remove = MenuItemBuilder::with_id(format!("remove-{id}"), "Remove")
         .build(&app)
         .map_err(|e| e.to_string())?;
-    let menu = Menu::with_items(&app, &[&mark_read, &reload, &separator, &remove])
+    let menu = Menu::with_items(&app, &[&mark_read, &reload, &hibernate, &separator, &remove])
         .map_err(|e| e.to_string())?;
 
     window
