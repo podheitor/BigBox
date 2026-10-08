@@ -1065,8 +1065,8 @@ fn setup_webview_permissions(wv: &tauri::Webview) {
             settings.set_enable_html5_local_storage(true);
             settings.set_enable_smooth_scrolling(true);
             // NOTE: do not change hardware_acceleration_policy here — main.rs
-            // disables DMABUF/compositing to avoid WebKitGTK rendering bugs;
-            // forcing Always would re-trigger them.
+            // disables DMABUF/compositing on NVIDIA to avoid WebKitGTK
+            // rendering bugs; forcing Always would re-trigger them.
         }
 
         // 3. target="_blank" / window.open → OAuth/login URLs stay in the
