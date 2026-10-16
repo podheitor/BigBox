@@ -42,6 +42,10 @@ pub struct AppState {
     pub spawn_marks:   Mutex<Vec<(String, f64)>>,
     /// Web process PID attributed to each service label (see `memguard`).
     pub web_pids:      Mutex<HashMap<String, u32>>,
+    /// Last memguard recycle of each service label.
+    pub recycled_at:   Mutex<HashMap<String, std::time::Instant>>,
+    /// Unattributed over-limit PIDs already logged by memguard.
+    pub reported_pids: Mutex<HashSet<u32>>,
 }
 
 // ── Config commands ──────────────────────────────────────────────

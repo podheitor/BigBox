@@ -13,8 +13,11 @@
 //! children from `/proc`, attributes each new one to the service whose
 //! webview was created or reloaded just before the process started, and
 //! recycles (terminate + reload) a hidden service whose process exceeds
-//! [`PROCESS_LIMIT_BYTES`]. The visible service is never touched. Processes
-//! that cannot be attributed (main UI, popups) are ignored.
+//! [`PROCESS_LIMIT_BYTES`], at most once per [`RECYCLE_COOLDOWN`]. The visible
+//! service is never touched. A process WebKit spawns later on its own (e.g.
+//! a process swap on navigation) has no spawn mark; it is attributed through
+//! the `sessions/<id>` cache it maps when that shows up, and otherwise only
+//! logged once when over the limit.
 
 use std::time::{Duration, Instant};
 
@@ -23,7 +26,11 @@ use tauri::{AppHandle, Manager};
 use crate::commands::AppState;
 
 /// Resident + swapped size above which a hidden service is recycled.
-pub const PROCESS_LIMIT_BYTES: u64 = 1024 * 1024 * 1024;
+/// Gmail alone sits around 1.2 GB right after loading, so stay above that.
+pub const PROCESS_LIMIT_BYTES: u64 = 1536 * 1024 * 1024;
+
+/// Minimum time between two recycles of the same service.
+const RECYCLE_COOLDOWN: Duration = Duration::from_secs(6 * 60 * 60);
 
 /// A service must have been hidden at least this long before a recycle.
 const IDLE_BEFORE_RECYCLE: Duration = Duration::from_secs(5 * 60);
@@ -69,12 +76,17 @@ fn sweep_leaking_services(app: &AppHandle) {
     let state: tauri::State<'_, AppState> = app.state();
     let procs = child_web_processes(std::process::id());
     attribute_new_processes(&state, &procs, uptime_secs().unwrap_or(0.0));
-    let Some((label, bytes)) = pick_recycle_target(&state, &procs, Instant::now()) else {
+    let unattributed = unattributed_over_limit(&state, &procs);
+    adopt_by_session(&state, &unattributed);
+    report_unattributed(&state, &procs);
+    let now = Instant::now();
+    let Some((label, bytes)) = pick_recycle_target(&state, &procs, now) else {
         return;
     };
     let Some(wv) = app.get_webview(&label) else { return };
     eprintln!("[memguard] recycling {label}: web process at {} MB", bytes / (1024 * 1024));
     state.web_pids.lock().unwrap().remove(&label);
+    state.recycled_at.lock().unwrap().insert(label.clone(), now);
     if crate::hibernate::terminate_web_process(&wv) {
         note_spawn(&state, &label);
         crate::hibernate::reload_webview(&wv);
@@ -98,6 +110,45 @@ fn attribute_new_processes(state: &AppState, procs: &[WebProcess], now: f64) {
     marks.retain(|(_, t)| now - t <= SPAWN_WINDOW_SECS);
 }
 
+/// PIDs over the limit that no service owns yet.
+fn unattributed_over_limit(state: &AppState, procs: &[WebProcess]) -> Vec<u32> {
+    let pids = state.web_pids.lock().unwrap();
+    procs
+        .iter()
+        .filter(|p| p.bytes > PROCESS_LIMIT_BYTES && !pids.values().any(|pid| *pid == p.pid))
+        .map(|p| p.pid)
+        .collect()
+}
+
+/// Attribute `candidates` through the `sessions/<id>` path in their maps,
+/// unless that service already owns a live process.
+fn adopt_by_session(state: &AppState, candidates: &[u32]) {
+    for pid in candidates {
+        let Ok(maps) = std::fs::read_to_string(format!("/proc/{pid}/maps")) else { continue };
+        let Some(id) = session_id_from_maps(&maps) else { continue };
+        state.web_pids.lock().unwrap().entry(format!("svc-{id}")).or_insert(*pid);
+    }
+}
+
+/// First `…/sessions/<id>/…` service id mentioned in a maps body.
+fn session_id_from_maps(maps: &str) -> Option<&str> {
+    let rest = &maps[maps.find("/sessions/")? + "/sessions/".len()..];
+    let id = &rest[..rest.find(['/', '\n'])?];
+    (!id.is_empty()).then_some(id)
+}
+
+/// Log, once per PID, processes over the limit that stay unattributed.
+fn report_unattributed(state: &AppState, procs: &[WebProcess]) {
+    let mut reported = state.reported_pids.lock().unwrap();
+    reported.retain(|pid| procs.iter().any(|p| p.pid == *pid));
+    for pid in unattributed_over_limit(state, procs) {
+        if reported.insert(pid) {
+            let mb = procs.iter().find(|p| p.pid == pid).map_or(0, |p| p.bytes / (1024 * 1024));
+            eprintln!("[memguard] unattributed web process {pid} at {mb} MB (not recycled)");
+        }
+    }
+}
+
 /// Index of the latest mark at or before `started_at` within the window.
 /// One tick of slack covers the coarse process start clock.
 fn closest_mark(marks: &[(String, f64)], started_at: f64) -> Option<usize> {
@@ -119,13 +170,17 @@ fn pick_recycle_target(
     let active = state.active_view.lock().unwrap().clone();
     let hibernated = state.hibernated.lock().unwrap();
     let last_used = state.last_used.lock().unwrap();
+    let recycled_at = state.recycled_at.lock().unwrap();
     let pids = state.web_pids.lock().unwrap();
     let idle = |l: &str| {
         last_used.get(l).is_none_or(|t| now.duration_since(*t) >= IDLE_BEFORE_RECYCLE)
     };
+    let cooled = |l: &str| {
+        recycled_at.get(l).is_none_or(|t| now.duration_since(*t) >= RECYCLE_COOLDOWN)
+    };
     pids.iter()
         .filter(|(l, _)| active.as_deref() != Some(l.as_str()) && !hibernated.contains(*l))
-        .filter(|(l, _)| idle(l))
+        .filter(|(l, _)| idle(l) && cooled(l))
         .filter_map(|(l, pid)| procs.iter().find(|p| p.pid == *pid).map(|p| (l.clone(), p.bytes)))
         .filter(|(_, bytes)| *bytes > PROCESS_LIMIT_BYTES)
         .max_by_key(|(_, bytes)| *bytes)
@@ -244,8 +299,30 @@ mod tests {
             state.web_pids.lock().unwrap().insert(label.into(), pid);
             hidden_since(&state, label, t0);
         }
-        let procs = [proc(1, 0.0, 3 * GIB), proc(2, 0.0, 2 * GIB), proc(3, 0.0, GIB / 2)];
+        let procs = [proc(1, 0.0, 3 * GIB), proc(2, 0.0, 2 * GIB), proc(3, 0.0, GIB)];
         assert_eq!(pick_recycle_target(&state, &procs, later), Some(("svc-wa".into(), 3 * GIB)));
+    }
+
+    #[test]
+    fn recently_recycled_service_waits_for_the_cooldown() {
+        let state = AppState::default();
+        let t0 = Instant::now();
+        state.web_pids.lock().unwrap().insert("svc-gmail".into(), 1);
+        hidden_since(&state, "svc-gmail", t0);
+        state.recycled_at.lock().unwrap().insert("svc-gmail".into(), t0);
+        let procs = [proc(1, 0.0, 2 * GIB)];
+        let soon = t0 + RECYCLE_COOLDOWN - Duration::from_secs(1);
+        assert_eq!(pick_recycle_target(&state, &procs, soon), None);
+        let later = t0 + RECYCLE_COOLDOWN;
+        assert_eq!(pick_recycle_target(&state, &procs, later), Some(("svc-gmail".into(), 2 * GIB)));
+    }
+
+    #[test]
+    fn session_id_is_read_from_maps() {
+        let maps = "7f00-7f01 r--s 0 00:1f 1 /usr/lib/libc.so\n\
+                    7f02-7f03 r--s 0 00:1f 2 /home/u/.local/share/bigbox/sessions/whatsapp/WebKitCache/x\n";
+        assert_eq!(session_id_from_maps(maps), Some("whatsapp"));
+        assert_eq!(session_id_from_maps("7f00-7f01 r--p 0 00:1f 1 /usr/lib/libc.so\n"), None);
     }
 
     #[test]
