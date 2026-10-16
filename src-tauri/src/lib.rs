@@ -131,6 +131,10 @@ pub fn run() {
             // Terminate the web process of opt-in services left idle (hidden).
             commands::start_hibernation_sweep(app.handle().clone());
 
+            // Recycle hidden services whose web process leaked past 1 GB.
+            #[cfg(target_os = "linux")]
+            commands::start_memory_guard(app.handle().clone());
+
             #[cfg(target_os = "linux")]
             commands::setup_gtk_layout(app)?;
 

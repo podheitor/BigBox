@@ -55,13 +55,14 @@ pub fn wake_if_hibernated(app: &AppHandle, state: &AppState, label: &str) -> boo
         return false;
     }
     if let Some(wv) = app.get_webview(label) {
+        crate::memguard::note_spawn(state, label);
         reload_webview(&wv);
     }
     true
 }
 
 #[cfg(target_os = "linux")]
-fn reload_webview(wv: &tauri::Webview) {
+pub(crate) fn reload_webview(wv: &tauri::Webview) {
     let _ = wv.with_webview(|platform_wv| {
         use webkit2gtk::WebViewExt;
         platform_wv.inner().reload();
@@ -69,7 +70,7 @@ fn reload_webview(wv: &tauri::Webview) {
 }
 
 #[cfg(not(target_os = "linux"))]
-fn reload_webview(wv: &tauri::Webview) {
+pub(crate) fn reload_webview(wv: &tauri::Webview) {
     let _ = wv.eval("window.location.reload()");
 }
 
@@ -124,7 +125,7 @@ fn filter_idle_labels(state: &AppState, opted_in: Vec<String>, now: Instant) -> 
 }
 
 #[cfg(target_os = "linux")]
-fn terminate_web_process(wv: &tauri::Webview) -> bool {
+pub(crate) fn terminate_web_process(wv: &tauri::Webview) -> bool {
     wv.with_webview(|platform_wv| {
         use webkit2gtk::WebViewExt;
         platform_wv.inner().terminate_web_process();
@@ -134,7 +135,7 @@ fn terminate_web_process(wv: &tauri::Webview) -> bool {
 
 /// WebView2 has no per-view process kill; hibernation is Linux-only.
 #[cfg(not(target_os = "linux"))]
-fn terminate_web_process(_wv: &tauri::Webview) -> bool {
+pub(crate) fn terminate_web_process(_wv: &tauri::Webview) -> bool {
     false
 }
 

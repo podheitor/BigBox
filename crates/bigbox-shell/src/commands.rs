@@ -38,6 +38,10 @@ pub struct AppState {
     pub last_used:     Mutex<HashMap<String, std::time::Instant>>,
     /// Labels whose web process was terminated by the hibernation sweep.
     pub hibernated:    Mutex<HashSet<String>>,
+    /// Pending `(label, uptime secs)` web-process spawns (see `memguard`).
+    pub spawn_marks:   Mutex<Vec<(String, f64)>>,
+    /// Web process PID attributed to each service label (see `memguard`).
+    pub web_pids:      Mutex<HashMap<String, u32>>,
 }
 
 // ── Config commands ──────────────────────────────────────────────
@@ -1325,6 +1329,7 @@ fn ensure_service_webview_created(
             Ok(wv) => {
                 state.created_views.lock().unwrap().insert(label.to_string());
                 crate::hibernate::mark_used(state, label);
+                crate::memguard::note_spawn(state, label);
                 crate::hibernate::apply_lean_cache_model(&wv);
                 setup_webview_permissions(&wv);
                 Ok(())

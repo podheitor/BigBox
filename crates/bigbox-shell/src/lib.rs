@@ -12,5 +12,7 @@
 
 mod commands;
 mod hibernate;
+mod memguard;
 pub use commands::*;
 pub use hibernate::{start_hibernation_sweep, toggle_hibernate};
+pub use memguard::start_memory_guard;
