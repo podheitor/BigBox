@@ -17,7 +17,8 @@
 //! service is never touched. A process WebKit spawns later on its own (e.g.
 //! a process swap on navigation) has no spawn mark; it is attributed through
 //! the `sessions/<id>` cache it maps when that shows up, and otherwise only
-//! logged once when over the limit.
+//! logged once when over the limit. A hidden service whose process is older
+//! than [`MAX_PROCESS_AGE`] is recycled too, whatever its size.
 
 use std::time::{Duration, Instant};
 
@@ -34,6 +35,13 @@ const RECYCLE_COOLDOWN: Duration = Duration::from_secs(6 * 60 * 60);
 
 /// A service must have been hidden at least this long before a recycle.
 const IDLE_BEFORE_RECYCLE: Duration = Duration::from_secs(5 * 60);
+
+/// A web process this old is recycled even under the limit, once hidden for
+/// [`IDLE_BEFORE_AGE_RECYCLE`], so a slow leak never gets to build up.
+const MAX_PROCESS_AGE: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// Hidden time required before an age-based recycle.
+const IDLE_BEFORE_AGE_RECYCLE: Duration = Duration::from_secs(60 * 60);
 
 /// Max delay between a webview spawn mark and its process start.
 const SPAWN_WINDOW_SECS: f64 = 20.0;
@@ -75,16 +83,20 @@ pub fn start_memory_guard(app: AppHandle) {
 fn sweep_leaking_services(app: &AppHandle) {
     let state: tauri::State<'_, AppState> = app.state();
     let procs = child_web_processes(std::process::id());
-    attribute_new_processes(&state, &procs, uptime_secs().unwrap_or(0.0));
-    let unattributed = unattributed_over_limit(&state, &procs);
-    adopt_by_session(&state, &unattributed);
+    let uptime = uptime_secs().unwrap_or(0.0);
+    attribute_new_processes(&state, &procs, uptime);
+    adopt_by_session(&state, &procs);
     report_unattributed(&state, &procs);
     let now = Instant::now();
-    let Some((label, bytes)) = pick_recycle_target(&state, &procs, now) else {
+    let Some((label, proc)) = pick_recycle_target(&state, &procs, now, uptime) else {
         return;
     };
     let Some(wv) = app.get_webview(&label) else { return };
-    eprintln!("[memguard] recycling {label}: web process at {} MB", bytes / (1024 * 1024));
+    eprintln!(
+        "[memguard] recycling {label}: web process at {} MB, {} h old",
+        proc.bytes / (1024 * 1024),
+        ((uptime - proc.started_at) / 3600.0) as u64,
+    );
     state.web_pids.lock().unwrap().remove(&label);
     state.recycled_at.lock().unwrap().insert(label.clone(), now);
     if crate::hibernate::terminate_web_process(&wv) {
@@ -120,14 +132,25 @@ fn unattributed_over_limit(state: &AppState, procs: &[WebProcess]) -> Vec<u32> {
         .collect()
 }
 
-/// Attribute `candidates` through the `sessions/<id>` path in their maps,
-/// unless that service already owns a live process.
-fn adopt_by_session(state: &AppState, candidates: &[u32]) {
-    for pid in candidates {
-        let Ok(maps) = std::fs::read_to_string(format!("/proc/{pid}/maps")) else { continue };
-        let Some(id) = session_id_from_maps(&maps) else { continue };
-        state.web_pids.lock().unwrap().entry(format!("svc-{id}")).or_insert(*pid);
+/// Attribute every process whose maps currently show a `sessions/<id>` path.
+/// That path only shows up now and then (WebKit maps and unmaps cache files),
+/// so every sweep looks, and a hit overrides a spawn-mark guess, which goes
+/// wrong when several services start within the same second.
+fn adopt_by_session(state: &AppState, procs: &[WebProcess]) {
+    for proc in procs {
+        let Ok(maps) = std::fs::read_to_string(format!("/proc/{}/maps", proc.pid)) else {
+            continue;
+        };
+        if let Some(id) = session_id_from_maps(&maps) {
+            bind_pid(&mut state.web_pids.lock().unwrap(), format!("svc-{id}"), proc.pid);
+        }
     }
+}
+
+/// Bind `label` to `pid`, dropping any other label that claimed `pid`.
+fn bind_pid(pids: &mut std::collections::HashMap<String, u32>, label: String, pid: u32) {
+    pids.retain(|l, p| *p != pid || *l == label);
+    pids.insert(label, pid);
 }
 
 /// First `…/sessions/<id>/…` service id mentioned in a maps body.
@@ -161,29 +184,37 @@ fn closest_mark(marks: &[(String, f64)], started_at: f64) -> Option<usize> {
         .map(|(i, _)| i)
 }
 
-/// The largest hidden, idle, attributed service over the limit.
+/// The largest hidden, idle, attributed service that is over the limit or
+/// whose process is older than [`MAX_PROCESS_AGE`] (`uptime` in seconds).
 fn pick_recycle_target(
     state: &AppState,
     procs: &[WebProcess],
     now: Instant,
-) -> Option<(String, u64)> {
+    uptime: f64,
+) -> Option<(String, WebProcess)> {
     let active = state.active_view.lock().unwrap().clone();
     let hibernated = state.hibernated.lock().unwrap();
     let last_used = state.last_used.lock().unwrap();
     let recycled_at = state.recycled_at.lock().unwrap();
     let pids = state.web_pids.lock().unwrap();
-    let idle = |l: &str| {
-        last_used.get(l).is_none_or(|t| now.duration_since(*t) >= IDLE_BEFORE_RECYCLE)
-    };
+    let idle_for = |l: &str| last_used.get(l).map_or(Duration::MAX, |t| now.duration_since(*t));
     let cooled = |l: &str| {
         recycled_at.get(l).is_none_or(|t| now.duration_since(*t) >= RECYCLE_COOLDOWN)
     };
     pids.iter()
         .filter(|(l, _)| active.as_deref() != Some(l.as_str()) && !hibernated.contains(*l))
-        .filter(|(l, _)| idle(l) && cooled(l))
-        .filter_map(|(l, pid)| procs.iter().find(|p| p.pid == *pid).map(|p| (l.clone(), p.bytes)))
-        .filter(|(_, bytes)| *bytes > PROCESS_LIMIT_BYTES)
-        .max_by_key(|(_, bytes)| *bytes)
+        .filter(|(l, _)| cooled(l))
+        .filter_map(|(l, pid)| procs.iter().find(|p| p.pid == *pid).map(|p| (l.clone(), p.clone())))
+        .filter(|(l, p)| needs_recycle(p, idle_for(l), uptime))
+        .max_by_key(|(_, p)| p.bytes)
+}
+
+/// Over the limit and hidden a few minutes, or simply old and hidden a while:
+/// webview leaks are cumulative, so a periodic reload resets them early.
+fn needs_recycle(proc: &WebProcess, idle: Duration, uptime: f64) -> bool {
+    let age = Duration::from_secs_f64((uptime - proc.started_at).max(0.0));
+    (proc.bytes > PROCESS_LIMIT_BYTES && idle >= IDLE_BEFORE_RECYCLE)
+        || (age >= MAX_PROCESS_AGE && idle >= IDLE_BEFORE_AGE_RECYCLE)
 }
 
 /// WebKitWebProcess children of `parent`, read from `/proc`.
@@ -250,6 +281,11 @@ mod tests {
         state.last_used.lock().unwrap().insert(label.to_string(), at);
     }
 
+    /// Recycle target as `(label, bytes)`, with processes started at uptime 0.
+    fn pick_bytes(state: &AppState, procs: &[WebProcess], now: Instant) -> Option<(String, u64)> {
+        pick_recycle_target(state, procs, now, 60.0).map(|(l, p)| (l, p.bytes))
+    }
+
     #[test]
     fn stat_line_with_spaces_in_comm_parses() {
         let line = "5734 (WebKitWebProces) S 4663 4663 4663 0 -1 4194560 1 0 0 0 \
@@ -300,7 +336,7 @@ mod tests {
             hidden_since(&state, label, t0);
         }
         let procs = [proc(1, 0.0, 3 * GIB), proc(2, 0.0, 2 * GIB), proc(3, 0.0, GIB)];
-        assert_eq!(pick_recycle_target(&state, &procs, later), Some(("svc-wa".into(), 3 * GIB)));
+        assert_eq!(pick_bytes(&state, &procs, later), Some(("svc-wa".into(), 3 * GIB)));
     }
 
     #[test]
@@ -312,9 +348,9 @@ mod tests {
         state.recycled_at.lock().unwrap().insert("svc-gmail".into(), t0);
         let procs = [proc(1, 0.0, 2 * GIB)];
         let soon = t0 + RECYCLE_COOLDOWN - Duration::from_secs(1);
-        assert_eq!(pick_recycle_target(&state, &procs, soon), None);
+        assert_eq!(pick_bytes(&state, &procs, soon), None);
         let later = t0 + RECYCLE_COOLDOWN;
-        assert_eq!(pick_recycle_target(&state, &procs, later), Some(("svc-gmail".into(), 2 * GIB)));
+        assert_eq!(pick_bytes(&state, &procs, later), Some(("svc-gmail".into(), 2 * GIB)));
     }
 
     #[test]
@@ -337,6 +373,23 @@ mod tests {
         hidden_since(&state, "svc-gmail", t0 + IDLE_BEFORE_RECYCLE);
         let procs = [proc(1, 0.0, 3 * GIB), proc(2, 0.0, 2 * GIB), proc(3, 0.0, GIB / 2)];
         let later = t0 + IDLE_BEFORE_RECYCLE + Duration::from_secs(1);
-        assert_eq!(pick_recycle_target(&state, &procs, later), None);
+        assert_eq!(pick_bytes(&state, &procs, later), None);
+    }
+
+    #[test]
+    fn session_hit_overrides_a_wrong_spawn_mark_guess() {
+        let mut pids = std::collections::HashMap::from([("svc-gmail".to_string(), 7)]);
+        bind_pid(&mut pids, "svc-whatsapp".into(), 7);
+        assert_eq!(pids, std::collections::HashMap::from([("svc-whatsapp".to_string(), 7)]));
+    }
+
+    #[test]
+    fn old_process_is_recycled_under_the_limit_after_an_hour_hidden() {
+        let day = MAX_PROCESS_AGE.as_secs_f64();
+        let small_old = proc(1, 0.0, GIB / 4);
+        assert!(!needs_recycle(&small_old, IDLE_BEFORE_AGE_RECYCLE, day - 1.0));
+        assert!(!needs_recycle(&small_old, IDLE_BEFORE_RECYCLE, day));
+        assert!(needs_recycle(&small_old, IDLE_BEFORE_AGE_RECYCLE, day));
+        assert!(needs_recycle(&proc(2, 0.0, 2 * GIB), IDLE_BEFORE_RECYCLE, 60.0));
     }
 }
